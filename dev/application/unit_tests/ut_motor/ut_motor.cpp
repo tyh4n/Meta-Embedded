@@ -20,10 +20,14 @@ private:
     void main() final{
         setName("feedback");
         while(!shouldTerminate()){
-            CANMotorController::set_target_angle(CANMotorCFG::MOTOR1, 60);
-            sleep(TIME_MS2I(1000));
-            CANMotorController::set_target_angle(CANMotorCFG::MOTOR1, -60);
-            sleep(TIME_MS2I(1000));
+            // CANMotorController::set_target_angle(CANMotorCFG::MOTOR1, 60);
+            CANMotorController::set_target_vel(CANMotorCFG::MOTOR1, 500);
+            CANMotorController::set_target_vel(CANMotorCFG::MOTOR2, 500);
+            sleep(TIME_MS2I(10));
+            // CANMotorController::set_target_angle(CANMotorCFG::MOTOR1, -60);
+            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR1, -10);
+            // sleep(TIME_MS2I(1000));
+            // Shell::printf("%.4f" ENDL, CANMotorIF::motor_feedback[0].actual_angle);
         }
     }
 } ControlThread;
