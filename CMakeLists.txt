@@ -262,6 +262,14 @@ target_include_directories(BALANCING_PROTOTYPE PRIVATE dev/interface/ahrs)
 target_include_directories(BALANCING_PROTOTYPE PRIVATE dev/application/vehicles/balancing_prototype)
 target_link_libraries(BALANCING_PROTOTYPE ${AHRS_LIB})
 
+# Main Program -- Stability System
+add_executable(STABILITY_SYSTEM
+        ${VEHICLE_COMMON_SRC}
+        dev/interface/remote/remote_interpreter.cpp
+        dev/application/vehicles/stability_system/can_motor_config.cpp
+        dev/application/vehicles/stability_system/main_stability_system.cpp)
+target_include_directories(STABILITY_SYSTEM PRIVATE dev/application/vehicles/stability_system)
+
 # Main Program -- Engineer
 
 
@@ -284,6 +292,7 @@ target_include_directories(ut_blink PRIVATE dev/application/unit_tests/ut_led)
 add_executable(ut_remote_interpreter
         dev/interface/remote/remote_interpreter.cpp
         dev/application/unit_tests/ut_remote_if/ut_remoteIF.cpp)
+target_include_directories(ut_remote_interpreter PRIVATE dev/application/unit_tests/ut_remote_if)
 
 # Motor
 add_executable(ut_motor

@@ -31,9 +31,9 @@
 #elif defined(BOARD_RM_C)
 // PC11 USART3_RX (alternate 7)
 #define REMOTE_UART_PAD GPIOC
-#define REMOTE_UART_PIN 7U
+#define REMOTE_UART_PIN 11U
 #define REMOTE_UART_ALTERNATE 7U
-#define REMOTE_UART_DRIVER UARTD1
+#define REMOTE_UART_DRIVER UARTD3
 #else
 #error "Remote interpreter has not been defined for selected board"
 #endif

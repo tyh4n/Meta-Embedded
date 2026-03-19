@@ -81,7 +81,7 @@ public:
 #if defined(BOARD_RM_C)
         LED_PAD_OFF(GPIOH, GPIOH_LED_R);
 #else
-        LED_PAD_OFF(GPIOF, GPIOF_LED_RED);
+        LED_PAD_OFF(GPIOF, GPIOE_LED_RED);
 #endif
     }
 
@@ -92,7 +92,7 @@ public:
 #if defined(BOARD_RM_C)
         LED_PAD_ON(GPIOH, GPIOH_LED_R);
 #else
-        LED_PAD_ON(GPIOF, GPIOF_LED_RED);
+        LED_PAD_ON(GPIOF, GPIOE_LED_RED);
 #endif
     }
 
@@ -103,7 +103,7 @@ public:
 #if defined(BOARD_RM_C)
         palTogglePad(GPIOH, GPIOH_LED_R);
 #else
-        palTogglePad(GPIOF, GPIOF_LED_RED);
+        palTogglePad(GPIOF, GPIOE_LED_RED);
 #endif
     }
 

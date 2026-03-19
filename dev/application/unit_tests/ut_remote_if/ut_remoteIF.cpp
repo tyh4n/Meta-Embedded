@@ -119,7 +119,7 @@ int main() {
 
     BuzzerSKD::init(LOWPRIO);
 
-    BuzzerSKD::play_sound(BuzzerSKD::sound_startup);
+    BuzzerSKD::play_sound(BuzzerSKD::sound_startup_dji);
 
     // See chconf.h for what this #define means.
 #if CH_CFG_NO_IDLE_THREAD
