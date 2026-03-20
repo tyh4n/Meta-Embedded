@@ -166,8 +166,9 @@ public:
     /**
      * Function to resynchronize UART receive to avoid receive starting from the middle of a frame
      * @note DO NOT call this function in lock state
+     * @param block  If true, blocks indefinitely until the cable is plugged in and data is flowing.
      */
-    static void uart_synchronize();
+    static void uart_synchronize(bool block = false);
 
 private:
 

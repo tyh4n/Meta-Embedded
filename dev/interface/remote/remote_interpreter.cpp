@@ -160,26 +160,49 @@ void Remote::uart_received_callback_(UARTDriver *uartp) {
     chSysUnlockFromISR();  /// --- EXIT S-Locked state ---
 }
 
-void Remote::uart_synchronize() {
+void Remote::uart_synchronize(bool block) {
     synchronizing = true;
-    // Wait for no input in 5 ms, to avoid one receive starting from the middle of a frame
+
+    // Abort any hanging async receive caused by a cable unplug
+    if (REMOTE_UART_DRIVER.rxstate == UART_RX_ACTIVE) {
+        uartStopReceive(&REMOTE_UART_DRIVER);
+    }
+
+    bool synced = false;
     while (true) {
-        // For unknown reason, uartReceiveTimeout() seems not to wait for additional bytes if byte_received > 1
         size_t byte_received = 1;
-        if (REMOTE_UART_DRIVER.rxstate != UART_RX_ACTIVE) {
-            msg_t ret = uartReceiveTimeout(&REMOTE_UART_DRIVER, &byte_received, rx_buf_, TIME_MS2I(5));
-            if (ret == MSG_TIMEOUT) break;
-        } else {
-            chThdSleepMicroseconds(20);  // sleep caller thread
+        // Wait for 1 byte (10ms timeout) to prove the ESP32 is connected and transmitting
+        msg_t ret = uartReceiveTimeout(&REMOTE_UART_DRIVER, &byte_received, rx_buf_, TIME_MS2I(10));
+
+        if (ret == MSG_OK) {
+            // Line is active! Now wait for the 5ms gap of silence to find the frame boundary
+            while (true) {
+                byte_received = 1;
+                ret = uartReceiveTimeout(&REMOTE_UART_DRIVER, &byte_received, rx_buf_, TIME_MS2I(5));
+                if (ret == MSG_TIMEOUT) {
+                    synced = true;
+                    break;
+                }
+            }
+            break;
+        } else if (!block) {
+            // If the line is dead and we aren't instructed to block (e.g. at boot), give up
+            break;
         }
     }
-    uartStartReceive(&REMOTE_UART_DRIVER, RX_FRAME_SIZE, rx_buf_);
+
+    // Only start the continuous receive if we successfully found a real frame gap
+    if (synced) {
+        uartStartReceive(&REMOTE_UART_DRIVER, RX_FRAME_SIZE, rx_buf_);
+    }
+
     synchronizing = false;
 }
 
 void Remote::start() {
     uartStart(&REMOTE_UART_DRIVER, &REMOTE_UART_CONFIG);
-    uart_synchronize();
+    // Don't block the main thread at boot if ESP32 is off! Let the watchdog handle it.
+    uart_synchronize(false);
 }
 
 Remote::key_t Remote::char2key(const char c) {
