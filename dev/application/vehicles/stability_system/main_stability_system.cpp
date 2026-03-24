@@ -65,6 +65,46 @@ private:
     }
 } remoteWatchdogThread;
 
+/**
+ * @brief Drives a motor to its mechanical hard stop and zeroes its encoder.
+ * @param motor_id The ID of the motor to home (e.g., CANMotorCFG::MOTOR1)
+ * @param homing_current The open-loop current to apply (positive or negative depending on direction)
+ */
+void home_motor(CANMotorCFG::motor_id_t motor_id, int homing_current) {
+    // Actuate the motor with a safe, low current.
+    CANMotorController::set_target_current(motor_id, homing_current);
+
+    // Give the motor 50ms to overcome static friction
+    chThdSleepMilliseconds(50);
+
+    int stall_counter = 0;
+    int timeout_counter = 0;
+
+    // Monitor velocity to detect the mechanical stop
+    while (stall_counter < 10 && timeout_counter < 300) {
+        float current_vel = CANMotorIF::motor_feedback[motor_id].actual_velocity;
+
+        // If the speed drops to near zero, increment the stall confidence
+        if (current_vel > -5.0f && current_vel < 5.0f) {
+            stall_counter++;
+        } else {
+            stall_counter = 0;
+        }
+
+        timeout_counter++;
+        chThdSleepMilliseconds(10); // Loop runs at 100Hz
+    }
+
+    // Stop pushing once the hard-stop is found
+    CANMotorController::set_target_current(motor_id, 0);
+
+    // Wait briefly for momentum/shaking to settle
+    chThdSleepMilliseconds(100);
+
+    // Establish this stalled position as absolute zero
+    CANMotorIF::motor_feedback[motor_id].reset_accumulate_angle();
+}
+
 int main(void) {
     halInit();
     System::init();
@@ -82,6 +122,10 @@ int main(void) {
 
     // Start Motor Controller
     CANMotorController::start(NORMALPRIO + 2, NORMALPRIO + 3, &can1, &can2);
+
+    // Homing
+    home_motor(CANMotorCFG::MOTOR1, -500);
+    // home_motor(CANMotorCFG::MOTOR2, -500);
 
     // Start our custom mapping thread
     remoteControlThread.start(NORMALPRIO + 4);
