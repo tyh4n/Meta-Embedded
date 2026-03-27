@@ -117,14 +117,10 @@ protected:
         // Wait for the PID controller to reach the target angle (with 3 second timeout)
         while (pid_timeout_counter < 300) {
             // Fetch the single-turn angle and the total number of revolutions
-            float current_angle = CANMotorIF::motor_feedback[MOTOR_ID].actual_angle;
-            int rounds = CANMotorIF::motor_feedback[MOTOR_ID].round_count;
-
-            // Calculate the absolute continuous angle!
-            float continuous_angle = (rounds * 360.0f) + current_angle;
+            float current_angle = CANMotorIF::motor_feedback[MOTOR_ID].accumulate_angle();
 
             // Calculate the error
-            float error = target_angle - continuous_angle;
+            float error = target_angle - current_angle;
 
             // Using 5.0f to allow for steady-state friction error
             if (error > -5.0f && error < 5.0f) {
@@ -138,8 +134,10 @@ protected:
         // Give the PID a tiny moment to settle perfectly
         chThdSleepMilliseconds(100);
 
-        // Establish this new, safe position as the absolute zero
+        // Set position as zero
         CANMotorIF::motor_feedback[MOTOR_ID].reset_accumulate_angle();
+        // Enable software limits
+        CANMotorCFG::enable_limits[MOTOR_ID] = true;
 
         // Disable Angle PID, leaving only Velocity PID active for the remote thread
         CANMotorCFG::enable_a2v[MOTOR_ID] = false;
@@ -149,8 +147,8 @@ protected:
 };
 
 // Home with -500 current, establish a 360-degree Home Offset using PID
-HomingThread<CANMotorCFG::MOTOR1, 400, 360> homingThread1;
-HomingThread<CANMotorCFG::MOTOR2, -400, 360> homingThread2;
+HomingThread<CANMotorCFG::MOTOR1, 300, 360> homingThread1;
+HomingThread<CANMotorCFG::MOTOR2, -300, 360> homingThread2;
 
 int main(void) {
     halInit();

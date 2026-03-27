@@ -51,14 +51,52 @@ int  CANMotorController::get_PID_current(motor_id_t id) {
 }
 
 void CANMotorController::set_target_angle(motor_id_t id, float target) {
+    // Safety Limit
+    if (CANMotorCFG::enable_limits[id])
+    {
+        float current_angle = CANMotorIF::motor_feedback[id].accumulate_angle();
+
+        if (current_angle <= CANMotorCFG::min_limit_deg[id] && target < 0.0f) {
+            target = 0.0f;
+        }
+        else if (current_angle >= CANMotorCFG::max_limit_deg[id] && target > 0.0f) {
+            target = 0.0f;
+        }
+    }
     SKDThread.targetA[id] = target;
 }
 
 void CANMotorController::set_target_vel(motor_id_t id, float target) {
+    // Safety Limit
+    if (CANMotorCFG::enable_limits[id])
+    {
+        float current_angle = CANMotorIF::motor_feedback[id].accumulate_angle();
+
+        if (current_angle <= CANMotorCFG::min_limit_deg[id] && target < 0.0f) {
+            target = 0.0f;
+        }
+        else if (current_angle >= CANMotorCFG::max_limit_deg[id] && target > 0.0f) {
+            target = 0.0f;
+        }
+    }
+
     SKDThread.targetV[id] = target;
 }
 
 void CANMotorController::set_target_current(motor_id_t id, int target) {
+    // Safety Limit
+    if (CANMotorCFG::enable_limits[id])
+    {
+        float current_angle = CANMotorIF::motor_feedback[id].accumulate_angle();
+
+        if (current_angle <= CANMotorCFG::min_limit_deg[id] && target < 0) {
+            target = 0;
+        }
+        else if (current_angle >= CANMotorCFG::max_limit_deg[id] && target > 0) {
+            target = 0;
+        }
+    }
+
     SKDThread.output[id] = target;
 }
 

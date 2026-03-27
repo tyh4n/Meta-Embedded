@@ -12,8 +12,8 @@ CANMotorBase CANMotorCFG::CANMotorProfile[MOTOR_COUNT] = {
 };
 
 PIDController::pid_params_t CANMotorCFG::a2vParams[MOTOR_COUNT] = {
-        {10.0, 0.1f, 0.0, 1000.0, 10000.0},
-        {10.0, 0.1f, 0.0, 1000.0, 10000.0},
+        {5.0, 0.1f, 0.0, 1000.0, 10000.0},
+        {5.0, 0.1f, 0.0, 1000.0, 10000.0},
 };
 
 PIDController::pid_params_t CANMotorCFG::v2iParams[MOTOR_COUNT] = {
@@ -21,12 +21,27 @@ PIDController::pid_params_t CANMotorCFG::v2iParams[MOTOR_COUNT] = {
         {20.0f, 0.0f, 0.0f, 100.0, 10000.0},
 };
 
-bool CANMotorCFG::enable_a2v[MOTOR_COUNT] {
+bool CANMotorCFG::enable_a2v[MOTOR_COUNT] = {
         false,
         false
 };
 
-bool CANMotorCFG::enable_v2i[MOTOR_COUNT] {
+bool CANMotorCFG::enable_v2i[MOTOR_COUNT] = {
         true,
         true
+};
+
+bool CANMotorCFG::enable_limits[MOTOR_COUNT] = {
+        false,
+        false
+};
+
+float CANMotorCFG::min_limit_deg[MOTOR_COUNT] = {
+        0.0f,
+        0.0f
+};
+
+float CANMotorCFG::max_limit_deg[MOTOR_COUNT] = {
+        720.0f,
+        720.0f
 };
