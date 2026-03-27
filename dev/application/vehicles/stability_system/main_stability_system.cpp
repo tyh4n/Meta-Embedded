@@ -66,44 +66,91 @@ private:
 } remoteWatchdogThread;
 
 /**
- * @brief Drives a motor to its mechanical hard stop and zeroes its encoder.
- * @param motor_id The ID of the motor to home (e.g., CANMotorCFG::MOTOR1)
- * @param homing_current The open-loop current to apply (positive or negative depending on direction)
+ * @brief Concurrent Homing Thread Template with PID Standoff
+ * @tparam MOTOR_ID The ID of the motor to home
+ * @tparam HOMING_CURRENT The open-loop current to apply to find the hard stop
+ * @tparam HOME_OFFSET_DEG The degrees to precisely back away using PID before setting absolute zero
  */
-void home_motor(CANMotorCFG::motor_id_t motor_id, int homing_current) {
-    // Actuate the motor with a safe, low current.
-    CANMotorController::set_target_current(motor_id, homing_current);
+template <CANMotorCFG::motor_id_t MOTOR_ID, int HOMING_CURRENT, int HOME_OFFSET_DEG>
+class HomingThread : public chibios_rt::BaseStaticThread<256> {
+public:
+    volatile bool is_homed = false;
 
-    // Give the motor 50ms to overcome static friction
-    chThdSleepMilliseconds(50);
+protected:
+    void main() final {
+        setName("HomingThd");
 
-    int stall_counter = 0;
-    int timeout_counter = 0;
+        // Disable both PID loops for open-loop hard-stop finding
+        CANMotorCFG::enable_v2i[MOTOR_ID] = false;
+        CANMotorCFG::enable_a2v[MOTOR_ID] = false;
 
-    // Monitor velocity to detect the mechanical stop
-    while (stall_counter < 10 && timeout_counter < 300) {
-        float current_vel = CANMotorIF::motor_feedback[motor_id].actual_velocity;
+        // Find the physical hard stop
+        CANMotorController::set_target_current(MOTOR_ID, HOMING_CURRENT);
+        chThdSleepMilliseconds(100);
 
-        // If the speed drops to near zero, increment the stall confidence
-        if (current_vel > -5.0f && current_vel < 5.0f) {
-            stall_counter++;
-        } else {
-            stall_counter = 0;
+        int stall_counter = 0;
+        int timeout_counter = 0;
+
+        while (stall_counter < 10 && timeout_counter < 1000) {
+            float current_vel = CANMotorIF::motor_feedback[MOTOR_ID].actual_velocity;
+            if (current_vel > -2.0f && current_vel < 2.0f) { stall_counter++; }
+            else { stall_counter = 0; }
+            timeout_counter++;
+            chThdSleepMilliseconds(10);
         }
 
-        timeout_counter++;
-        chThdSleepMilliseconds(10); // Loop runs at 100Hz
+        // Stop and temporarily zero the encoder at the physical limit
+        CANMotorController::set_target_current(MOTOR_ID, 0);
+        chThdSleepMilliseconds(100);
+        CANMotorIF::motor_feedback[MOTOR_ID].reset_accumulate_angle();
+
+        // Re-enable BOTH loops for precise Angle tracking
+        CANMotorCFG::enable_v2i[MOTOR_ID] = true;
+        CANMotorCFG::enable_a2v[MOTOR_ID] = true;
+
+        // Calculate the direction to back off
+        float target_angle = (HOMING_CURRENT < 0) ? HOME_OFFSET_DEG : -HOME_OFFSET_DEG;
+        CANMotorController::set_target_angle(MOTOR_ID, target_angle);
+
+        int pid_timeout_counter = 0;
+
+        // Wait for the PID controller to reach the target angle (with 3 second timeout)
+        while (pid_timeout_counter < 300) {
+            // Fetch the single-turn angle and the total number of revolutions
+            float current_angle = CANMotorIF::motor_feedback[MOTOR_ID].actual_angle;
+            int rounds = CANMotorIF::motor_feedback[MOTOR_ID].round_count;
+
+            // Calculate the absolute continuous angle!
+            float continuous_angle = (rounds * 360.0f) + current_angle;
+
+            // Calculate the error
+            float error = target_angle - continuous_angle;
+
+            // Using 5.0f to allow for steady-state friction error
+            if (error > -5.0f && error < 5.0f) {
+                break;
+            }
+
+            pid_timeout_counter++;
+            chThdSleepMilliseconds(10);
+        }
+
+        // Give the PID a tiny moment to settle perfectly
+        chThdSleepMilliseconds(100);
+
+        // Establish this new, safe position as the absolute zero
+        CANMotorIF::motor_feedback[MOTOR_ID].reset_accumulate_angle();
+
+        // Disable Angle PID, leaving only Velocity PID active for the remote thread
+        CANMotorCFG::enable_a2v[MOTOR_ID] = false;
+
+        is_homed = true;
     }
+};
 
-    // Stop pushing once the hard-stop is found
-    CANMotorController::set_target_current(motor_id, 0);
-
-    // Wait briefly for momentum/shaking to settle
-    chThdSleepMilliseconds(100);
-
-    // Establish this stalled position as absolute zero
-    CANMotorIF::motor_feedback[motor_id].reset_accumulate_angle();
-}
+// Home with -500 current, establish a 360-degree Home Offset using PID
+HomingThread<CANMotorCFG::MOTOR1, 400, 360> homingThread1;
+HomingThread<CANMotorCFG::MOTOR2, -400, 360> homingThread2;
 
 int main(void) {
     halInit();
@@ -112,20 +159,27 @@ int main(void) {
     // Start Shell for printing
     Shell::start(HIGHPRIO);
     LED::all_off();
+    LED::red_on();
 
     // Start the DBUS Remote interpreter
     Remote::start();
 
-    // Start CAN Interfaces
+    // Start CAN Interface
     can1.start(NORMALPRIO);
     can2.start(NORMALPRIO + 1);
 
     // Start Motor Controller
     CANMotorController::start(NORMALPRIO + 2, NORMALPRIO + 3, &can1, &can2);
 
-    // Homing
-    home_motor(CANMotorCFG::MOTOR1, -500);
-    // home_motor(CANMotorCFG::MOTOR2, -500);
+    // Start homing threads
+    homingThread1.start(NORMALPRIO + 4);
+    homingThread2.start(NORMALPRIO + 4);
+
+    // Block the main boot sequence until motors are homed
+    while (!homingThread1.is_homed || !homingThread2.is_homed) {
+        chThdSleepMilliseconds(10);
+    }
+    LED::red_off();
 
     // Start our custom mapping thread
     remoteControlThread.start(NORMALPRIO + 4);
