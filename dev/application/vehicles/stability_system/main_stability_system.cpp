@@ -28,11 +28,23 @@ private:
             // The remote channels return normalized values from -1.0 to 1.0
             // Multiply by 200.0f to scale the threshold to [-200, 200]
             float target_vel_1 = Remote::rc.ch0 * 2000.0f;
-            float target_vel_2 = Remote::rc.ch2 * 2000.0f;
+            float target_vel_2 = - Remote::rc.ch2 * 2000.0f;
+
+            target_vel_1 = (-100.0f < target_vel_1 && target_vel_1 < 100.0f) ? 0.0f: target_vel_1;
+            target_vel_2 = (-100.0f < target_vel_2 && target_vel_2 < 100.0f) ? 0.0f: target_vel_2;
 
             // Send target velocities to the PID controllers
-            CANMotorController::set_target_vel(CANMotorCFG::MOTOR1, target_vel_1);
-            CANMotorController::set_target_vel(CANMotorCFG::MOTOR2, target_vel_2);
+            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR1, target_vel_1);
+            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR2, target_vel_2);
+
+            CANMotorController::set_target_vel(CANMotorCFG::MOTOR3, target_vel_1);
+            CANMotorController::set_target_vel(CANMotorCFG::MOTOR4, target_vel_2);
+
+            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR5, target_vel_1);
+            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR6, target_vel_2);
+            //
+            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR7, target_vel_1);
+            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR8, target_vel_2);
 
             // Print the values to the Shell
             Shell::printf("CH0: %.2f -> V1: %.2f | CH2: %.2f -> V2: %.2f" SHELL_NEWLINE_STR,
@@ -137,7 +149,7 @@ protected:
         // Set position as zero
         CANMotorIF::motor_feedback[MOTOR_ID].reset_accumulate_angle();
         // Enable software limits
-        CANMotorCFG::enable_limits[MOTOR_ID] = true;
+        // CANMotorCFG::enable_limits[MOTOR_ID] = true;
 
         // Disable Angle PID, leaving only Velocity PID active for the remote thread
         CANMotorCFG::enable_a2v[MOTOR_ID] = false;
@@ -147,8 +159,14 @@ protected:
 };
 
 // Home with -500 current, establish a 360-degree Home Offset using PID
-HomingThread<CANMotorCFG::MOTOR1, 300, 360> homingThread1;
-HomingThread<CANMotorCFG::MOTOR2, -300, 360> homingThread2;
+HomingThread<CANMotorCFG::MOTOR1, 350, 360> homingThread1;
+HomingThread<CANMotorCFG::MOTOR2, -350, 360> homingThread2;
+HomingThread<CANMotorCFG::MOTOR3, 900, 360> homingThread3;
+HomingThread<CANMotorCFG::MOTOR4, -400, 360> homingThread4;
+HomingThread<CANMotorCFG::MOTOR5, 450, 360> homingThread5;
+HomingThread<CANMotorCFG::MOTOR6, -450, 360> homingThread6;
+HomingThread<CANMotorCFG::MOTOR7, 450, 360> homingThread7;
+HomingThread<CANMotorCFG::MOTOR8, -450, 360> homingThread8;
 
 int main(void) {
     halInit();
@@ -170,11 +188,23 @@ int main(void) {
     CANMotorController::start(NORMALPRIO + 2, NORMALPRIO + 3, &can1, &can2);
 
     // Start homing threads
-    homingThread1.start(NORMALPRIO + 4);
-    homingThread2.start(NORMALPRIO + 4);
+    // homingThread1.start(NORMALPRIO + 4);
+    // homingThread2.start(NORMALPRIO + 4);
+    homingThread3.start(NORMALPRIO + 4);
+    homingThread4.start(NORMALPRIO + 4);
+    // homingThread5.start(NORMALPRIO + 4);
+    // homingThread6.start(NORMALPRIO + 4);
+    // homingThread7.start(NORMALPRIO + 4);
+    // homingThread8.start(NORMALPRIO + 4);
 
     // Block the main boot sequence until motors are homed
-    while (!homingThread1.is_homed || !homingThread2.is_homed) {
+    // while (!homingThread1.is_homed || !homingThread2.is_homed ||
+    //     !homingThread3.is_homed || !homingThread4.is_homed ||
+    //     !homingThread5.is_homed || !homingThread6.is_homed ||
+    //     !homingThread7.is_homed || !homingThread8.is_homed) {
+    //     chThdSleepMilliseconds(10);
+    // }
+    while (!homingThread3.is_homed || !homingThread4.is_homed) {
         chThdSleepMilliseconds(10);
     }
     LED::red_off();
