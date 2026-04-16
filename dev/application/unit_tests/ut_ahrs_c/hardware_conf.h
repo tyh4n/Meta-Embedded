@@ -6,7 +6,7 @@
 #define META_EMBEDDED_HARDWARE_CONF_H
 
 #if !defined(ENABLE_USB_SHELL) || defined(__DOXYGEN__)
-#define ENABLE_USB_SHELL                TRUE
+#define ENABLE_USB_SHELL                FALSE
 #endif
 
 #endif //META_EMBEDDED_HARDWARE_CONF_H

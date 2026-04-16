@@ -1,6 +1,5 @@
 //
 // Created by Tianyi Han on 3/18/2026.
-//
 // main_stability_system.cpp
 //
 
@@ -16,60 +15,155 @@
 
 using namespace chibios_rt;
 
+// Motor homing configuration struct
+
+struct HomingConfig {
+    CANMotorCFG::motor_id_t m0;
+    CANMotorCFG::motor_id_t m1;
+    float velocity0;
+    float velocity1;
+    float current_limit0;
+    float current_limit1;
+    float offset;
+};
+
+/**
+    Motor homing configuration table
+ */
+static const HomingConfig homing_list[] = {
+    {CANMotorCFG::MOTOR1, CANMotorCFG::MOTOR2, 300.0f, -300.0f, 500.0f, 600.0f, 360.0f},
+    // {CANMotorCFG::MOTOR3, CANMotorCFG::MOTOR4, -300.0f, 300.0f, 360.0f},
+    // {CANMotorCFG::MOTOR5, CANMotorCFG::MOTOR6, -300.0f, 300.0f, 360.0f},
+    // {CANMotorCFG::MOTOR7, CANMotorCFG::MOTOR8, -300.0f, 300.0f, 360.0f},
+};
+
+#define HOMING_GROUP_COUNT (sizeof(homing_list) / sizeof(HomingConfig))
+
+// CAN interface
 CANInterface can1(&CAND1);
 CANInterface can2(&CAND2);
 
+// Homing thread
+class HomingThread : public chibios_rt::BaseStaticThread<512> {
+public:
+    volatile bool is_homed = false;
+
+private:
+    HomingConfig cfg;
+
+public:
+    HomingThread(HomingConfig config) : cfg(config) {}
+
+protected:
+    void main() final {
+        setName("DualHoming");
+
+        CANMotorCFG::motor_id_t motors[2] = {cfg.m0, cfg.m1};
+        float velocity[2] = {cfg.velocity0, cfg.velocity1};
+        float current_limit[2] = {cfg.current_limit0, cfg.current_limit1};
+        float original_max_out[2];
+
+        // Lower current limits and start moving toward mechanical limit
+        for (int i = 0; i < 2; i++) {
+            original_max_out[i] = CANMotorCFG::v2iParams[motors[i]].i_limit;
+            CANMotorCFG::v2iParams[motors[i]].i_limit = current_limit[i];
+
+            CANMotorCFG::enable_v2i[motors[i]] = true;
+            CANMotorCFG::enable_a2v[motors[i]] = false;
+
+            CANMotorController::set_target_vel(motors[i], velocity[i]);
+        }
+
+        chThdSleepMilliseconds(100);
+
+        // Stall detection
+        bool stalled[2] = {false, false};
+        int stall_counter[2] = {0, 0};
+        int timeout_counter = 0;
+
+        while ((!stalled[0] || !stalled[1]) && timeout_counter < 1000) {
+            for (int i = 0; i < 2; i++) {
+                if (!stalled[i]) {
+                    float current_vel = CANMotorIF::motor_feedback[motors[i]].actual_velocity;
+
+                    if (current_vel > -1.0f && current_vel < 1.0f) {
+                        if (++stall_counter[i] >= 10) {
+                            stalled[i] = true;
+                            CANMotorController::set_target_vel(motors[i], 0);
+                        }
+                    } else {
+                        stall_counter[i] = 0;
+                    }
+                }
+            }
+            timeout_counter++;
+            chThdSleepMilliseconds(10);
+        }
+
+        // Zero accumulate angle and move to PID offset
+        chThdSleepMilliseconds(100);
+        for (int i = 0; i < 2; i++) {
+            CANMotorIF::motor_feedback[motors[i]].reset_accumulate_angle();
+            CANMotorCFG::enable_limits[motors[i]] = true;
+
+            // Restore original current limits and switch to angle control
+            CANMotorCFG::v2iParams[motors[i]].i_limit = original_max_out[i];
+            CANMotorCFG::enable_a2v[motors[i]] = true;
+
+            float target_angle = (velocity[i] < 0) ? cfg.offset : -cfg.offset;
+            CANMotorController::set_target_angle(motors[i], target_angle);
+        }
+
+        // Wait for motor to reach target angle
+        chThdSleepMilliseconds(2000);
+
+        // Disable a2v control
+        for (int i = 0; i < 2; i++) {
+            CANMotorCFG::enable_a2v[motors[i]] = false;
+        }
+
+        is_homed = true;
+    }
+};
+
+// Global array of homing thread pointers
+HomingThread* homingThreads[HOMING_GROUP_COUNT];
+
+// Remote Control Thread
 class RemoteControlThread : public BaseStaticThread<1024> {
 private:
     void main() final {
         setName("RemoteControl");
 
         while (!shouldTerminate()) {
-            // The remote channels return normalized values from -1.0 to 1.0
-            // Multiply by 200.0f to scale the threshold to [-200, 200]
             float target_vel_1 = Remote::rc.ch0 * 2000.0f;
             float target_vel_2 = - Remote::rc.ch2 * 2000.0f;
 
-            target_vel_1 = (-100.0f < target_vel_1 && target_vel_1 < 100.0f) ? 0.0f: target_vel_1;
-            target_vel_2 = (-100.0f < target_vel_2 && target_vel_2 < 100.0f) ? 0.0f: target_vel_2;
+            // Deadband filter
+            if (target_vel_1 > -100.0f && target_vel_1 < 100.0f) target_vel_1 = 0.0f;
+            if (target_vel_2 > -100.0f && target_vel_2 < 100.0f) target_vel_2 = 0.0f;
 
-            // Send target velocities to the PID controllers
-            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR1, target_vel_1);
-            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR2, target_vel_2);
+            // Loop through all configured homing groups to apply control
+            for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+                CANMotorController::set_target_vel(homing_list[i].m0, target_vel_1);
+                CANMotorController::set_target_vel(homing_list[i].m1, target_vel_2);
+            }
 
-            CANMotorController::set_target_vel(CANMotorCFG::MOTOR3, target_vel_1);
-            CANMotorController::set_target_vel(CANMotorCFG::MOTOR4, target_vel_2);
+            Shell::printf("V1: %.2f | V2: %.2f" SHELL_NEWLINE_STR, target_vel_1, target_vel_2);
 
-            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR5, target_vel_1);
-            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR6, target_vel_2);
-            //
-            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR7, target_vel_1);
-            // CANMotorController::set_target_vel(CANMotorCFG::MOTOR8, target_vel_2);
-
-            // Print the values to the Shell
-            Shell::printf("CH0: %.2f -> V1: %.2f | CH2: %.2f -> V2: %.2f" SHELL_NEWLINE_STR,
-                          Remote::rc.ch0, target_vel_1,
-                          Remote::rc.ch2, target_vel_2);
-
-            // Run at ~50Hz
             sleep(TIME_MS2I(20));
         }
     }
 } remoteControlThread;
 
+// Watchdog Thread
 class RemoteWatchdogThread : public chibios_rt::BaseStaticThread<256> {
 private:
     void main() final {
         setName("RemoteWdg");
         while (!shouldTerminate()) {
-            // If 100ms passes without a successful DBUS frame update
             if (chibios_rt::System::getTime() - Remote::last_update_time > TIME_MS2I(100)) {
-
-                // Force the UART to resynchronize.
-                // Passing 'true' makes it block here patiently until the cable is plugged back in.
                 Remote::uart_synchronize(true);
-
-                // Reset the timer so it doesn't instantly trigger again
                 Remote::last_update_time = chibios_rt::System::getTime();
             }
             sleep(TIME_MS2I(50));
@@ -77,146 +171,45 @@ private:
     }
 } remoteWatchdogThread;
 
-/**
- * @brief Concurrent Homing Thread Template with PID Standoff
- * @tparam MOTOR_ID The ID of the motor to home
- * @tparam HOMING_CURRENT The open-loop current to apply to find the hard stop
- * @tparam HOME_OFFSET_DEG The degrees to precisely back away using PID before setting absolute zero
- */
-template <CANMotorCFG::motor_id_t MOTOR_ID, int HOMING_CURRENT, int HOME_OFFSET_DEG>
-class HomingThread : public chibios_rt::BaseStaticThread<256> {
-public:
-    volatile bool is_homed = false;
-
-protected:
-    void main() final {
-        setName("HomingThd");
-
-        // Disable both PID loops for open-loop hard-stop finding
-        CANMotorCFG::enable_v2i[MOTOR_ID] = false;
-        CANMotorCFG::enable_a2v[MOTOR_ID] = false;
-
-        // Find the physical hard stop
-        CANMotorController::set_target_current(MOTOR_ID, HOMING_CURRENT);
-        chThdSleepMilliseconds(100);
-
-        int stall_counter = 0;
-        int timeout_counter = 0;
-
-        while (stall_counter < 10 && timeout_counter < 1000) {
-            float current_vel = CANMotorIF::motor_feedback[MOTOR_ID].actual_velocity;
-            if (current_vel > -2.0f && current_vel < 2.0f) { stall_counter++; }
-            else { stall_counter = 0; }
-            timeout_counter++;
-            chThdSleepMilliseconds(10);
-        }
-
-        // Stop and temporarily zero the encoder at the physical limit
-        CANMotorController::set_target_current(MOTOR_ID, 0);
-        chThdSleepMilliseconds(100);
-        CANMotorIF::motor_feedback[MOTOR_ID].reset_accumulate_angle();
-
-        // Re-enable BOTH loops for precise Angle tracking
-        CANMotorCFG::enable_v2i[MOTOR_ID] = true;
-        CANMotorCFG::enable_a2v[MOTOR_ID] = true;
-
-        // Calculate the direction to back off
-        float target_angle = (HOMING_CURRENT < 0) ? HOME_OFFSET_DEG : -HOME_OFFSET_DEG;
-        CANMotorController::set_target_angle(MOTOR_ID, target_angle);
-
-        int pid_timeout_counter = 0;
-
-        // Wait for the PID controller to reach the target angle (with 3 second timeout)
-        while (pid_timeout_counter < 300) {
-            // Fetch the single-turn angle and the total number of revolutions
-            float current_angle = CANMotorIF::motor_feedback[MOTOR_ID].accumulate_angle();
-
-            // Calculate the error
-            float error = target_angle - current_angle;
-
-            // Using 5.0f to allow for steady-state friction error
-            if (error > -5.0f && error < 5.0f) {
-                break;
-            }
-
-            pid_timeout_counter++;
-            chThdSleepMilliseconds(10);
-        }
-
-        // Give the PID a tiny moment to settle perfectly
-        chThdSleepMilliseconds(100);
-
-        // Set position as zero
-        CANMotorIF::motor_feedback[MOTOR_ID].reset_accumulate_angle();
-        // Enable software limits
-        // CANMotorCFG::enable_limits[MOTOR_ID] = true;
-
-        // Disable Angle PID, leaving only Velocity PID active for the remote thread
-        CANMotorCFG::enable_a2v[MOTOR_ID] = false;
-
-        is_homed = true;
-    }
-};
-
-// Home with -500 current, establish a 360-degree Home Offset using PID
-HomingThread<CANMotorCFG::MOTOR1, 350, 360> homingThread1;
-HomingThread<CANMotorCFG::MOTOR2, -350, 360> homingThread2;
-HomingThread<CANMotorCFG::MOTOR3, 900, 360> homingThread3;
-HomingThread<CANMotorCFG::MOTOR4, -400, 360> homingThread4;
-HomingThread<CANMotorCFG::MOTOR5, 450, 360> homingThread5;
-HomingThread<CANMotorCFG::MOTOR6, -450, 360> homingThread6;
-HomingThread<CANMotorCFG::MOTOR7, 450, 360> homingThread7;
-HomingThread<CANMotorCFG::MOTOR8, -450, 360> homingThread8;
 
 int main(void) {
     halInit();
     System::init();
 
-    // Start Shell for printing
     Shell::start(HIGHPRIO);
     LED::all_off();
     LED::red_on();
 
-    // Start the DBUS Remote interpreter
     Remote::start();
-
-    // Start CAN Interface
     can1.start(NORMALPRIO);
     can2.start(NORMALPRIO + 1);
-
-    // Start Motor Controller
     CANMotorController::start(NORMALPRIO + 2, NORMALPRIO + 3, &can1, &can2);
 
-    // Start homing threads
-    // homingThread1.start(NORMALPRIO + 4);
-    // homingThread2.start(NORMALPRIO + 4);
-    homingThread3.start(NORMALPRIO + 4);
-    homingThread4.start(NORMALPRIO + 4);
-    // homingThread5.start(NORMALPRIO + 4);
-    // homingThread6.start(NORMALPRIO + 4);
-    // homingThread7.start(NORMALPRIO + 4);
-    // homingThread8.start(NORMALPRIO + 4);
+    // Initialize and Start all homing threads from the config list
+    for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+        homingThreads[i] = new HomingThread(homing_list[i]);
+        homingThreads[i]->start(NORMALPRIO + 4);
+    }
 
-    // Block the main boot sequence until motors are homed
-    // while (!homingThread1.is_homed || !homingThread2.is_homed ||
-    //     !homingThread3.is_homed || !homingThread4.is_homed ||
-    //     !homingThread5.is_homed || !homingThread6.is_homed ||
-    //     !homingThread7.is_homed || !homingThread8.is_homed) {
-    //     chThdSleepMilliseconds(10);
-    // }
-    while (!homingThread3.is_homed || !homingThread4.is_homed) {
+    // Block until all motors are homed
+    bool all_ready = false;
+    while (!all_ready) {
+        all_ready = true;
+        for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+            if (!homingThreads[i]->is_homed) {
+                all_ready = false;
+                break;
+            }
+        }
         chThdSleepMilliseconds(10);
     }
+
+    // Start Operational Threads
     LED::red_off();
-
-    // Start our custom mapping thread
-    remoteControlThread.start(NORMALPRIO + 4);
-
-    // Start the Watchdog
-    remoteWatchdogThread.start(NORMALPRIO - 1);
-
-    // Indicator light
     LED::green_on();
+
+    remoteControlThread.start(NORMALPRIO + 4);
+    remoteWatchdogThread.start(NORMALPRIO - 1);
 
 #if CH_CFG_NO_IDLE_THREAD
     while (true) {}
