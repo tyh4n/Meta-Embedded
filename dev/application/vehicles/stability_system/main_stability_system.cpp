@@ -31,10 +31,10 @@ struct HomingConfig {
     Motor homing configuration table
  */
 static const HomingConfig homing_list[] = {
-    {CANMotorCFG::MOTOR1, CANMotorCFG::MOTOR2, 300.0f, -300.0f, 500.0f, 600.0f, 360.0f},
-    // {CANMotorCFG::MOTOR3, CANMotorCFG::MOTOR4, -300.0f, 300.0f, 360.0f},
-    // {CANMotorCFG::MOTOR5, CANMotorCFG::MOTOR6, -300.0f, 300.0f, 360.0f},
-    // {CANMotorCFG::MOTOR7, CANMotorCFG::MOTOR8, -300.0f, 300.0f, 360.0f},
+    {CANMotorCFG::MOTOR1, CANMotorCFG::MOTOR2, 360.0f, -360.0f, 300.0f, 300.0f, 360.0f},
+    {CANMotorCFG::MOTOR3, CANMotorCFG::MOTOR4, 360.0f, -360.0f, 300.0f, 300.0f, 360.0f},
+    {CANMotorCFG::MOTOR5, CANMotorCFG::MOTOR6, 360.0f, -360.0f, 300.0f, 300.0f, 360.0f},
+    {CANMotorCFG::MOTOR7, CANMotorCFG::MOTOR8, 360.0f, -360.0f, 300.0f, 300.0f, 360.0f},
 };
 
 #define HOMING_GROUP_COUNT (sizeof(homing_list) / sizeof(HomingConfig))
@@ -81,10 +81,15 @@ protected:
         int stall_counter[2] = {0, 0};
         int timeout_counter = 0;
 
-        while ((!stalled[0] || !stalled[1]) && timeout_counter < 1000) {
+        while ((!stalled[0] || !stalled[1]) && timeout_counter < 10000) {
             for (int i = 0; i < 2; i++) {
                 if (!stalled[i]) {
                     float current_vel = CANMotorIF::motor_feedback[motors[i]].actual_velocity;
+
+                    if (i == 1)
+                    {
+                        Shell::printf("%.2f" SHELL_NEWLINE_STR, current_vel);
+                    }
 
                     if (current_vel > -1.0f && current_vel < 1.0f) {
                         if (++stall_counter[i] >= 10) {
@@ -149,7 +154,7 @@ private:
                 CANMotorController::set_target_vel(homing_list[i].m1, target_vel_2);
             }
 
-            Shell::printf("V1: %.2f | V2: %.2f" SHELL_NEWLINE_STR, target_vel_1, target_vel_2);
+            // Shell::printf("V1: %.2f | V2: %.2f" SHELL_NEWLINE_STR, target_vel_1, target_vel_2);
 
             sleep(TIME_MS2I(20));
         }
