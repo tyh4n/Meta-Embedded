@@ -109,7 +109,6 @@ protected:
         chThdSleepMilliseconds(100);
         for (int i = 0; i < 2; i++) {
             CANMotorIF::motor_feedback[motors[i]].reset_accumulate_angle();
-            CANMotorCFG::enable_limits[motors[i]] = true;
 
             // Restore original current limits and switch to angle control
             CANMotorCFG::v2iParams[motors[i]].i_limit = original_max_out[i];
@@ -124,6 +123,8 @@ protected:
 
         // Disable a2v control
         for (int i = 0; i < 2; i++) {
+            CANMotorIF::motor_feedback[motors[i]].reset_accumulate_angle();
+            CANMotorCFG::enable_limits[motors[i]] = true;
             CANMotorCFG::enable_a2v[motors[i]] = false;
         }
 
@@ -137,6 +138,13 @@ HomingThread* homingThreads[HOMING_GROUP_COUNT];
 // Remote Control Thread
 class RemoteControlThread : public BaseStaticThread<1024> {
 private:
+    // Define physical limits
+    static constexpr float MAX_DELTA_Y_MM = 54.1f; // Corresponds to -45 degrees
+    static constexpr float MIN_DELTA_Y_MM = 0.0f;  // Corresponds to -90 degrees
+
+    // Define pitch
+    static constexpr float MM_PER_DEGREE = 2.0f / 360.0f;
+
     void main() final {
         setName("RemoteControl");
 
@@ -150,6 +158,26 @@ private:
 
             // Loop through all configured homing groups to apply control
             for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+                // Calculate current delta y
+                float y_m0 = CANMotorIF::motor_feedback[homing_list[i].m0].accumulate_angle() * MM_PER_DEGREE;
+                float y_m1 = CANMotorIF::motor_feedback[homing_list[i].m1].accumulate_angle() * MM_PER_DEGREE;
+
+                // Check -45 degree limit
+                if (y_m0 + y_m1 >= MAX_DELTA_Y_MM) {
+                    // Prevent m0 from moving further positive
+                    if (target_vel_1 > 0.0f) target_vel_1 = 0.0f;
+                    // Prevent m1 from moving further positive
+                    if (target_vel_2 > 0.0f) target_vel_2 = 0.0f;
+                }
+
+                // Check -90 degree limit
+                if (y_m0 + y_m1 <= MIN_DELTA_Y_MM) {
+                    // Prevent m0 from moving further negative
+                    if (target_vel_1 < 0.0f) target_vel_1 = 0.0f;
+                    // Prevent m1 from moving further negative
+                    if (target_vel_2 < 0.0f) target_vel_2 = 0.0f;
+                }
+
                 CANMotorController::set_target_vel(homing_list[i].m0, target_vel_1);
                 CANMotorController::set_target_vel(homing_list[i].m1, target_vel_2);
             }
