@@ -301,6 +301,13 @@ add_executable(ut_motor
         dev/application/unit_tests/ut_motor/can_motor_config.cpp)
 target_include_directories(ut_motor PRIVATE dev/application/unit_tests/ut_motor)
 
+# Pid_tuning
+add_executable(ut_pid_tuning
+        ${VEHICLE_COMMON_SRC}
+        dev/application/unit_tests/ut_pid_tuning/ut_pid_tuning.cpp
+        dev/application/unit_tests/ut_pid_tuning/can_motor_config.cpp)
+target_include_directories(ut_pid_tuning PRIVATE dev/application/unit_tests/ut_pid_tuning)
+
 # IMU: include IMU interface and unit test.
 add_executable(ut_imu
         dev/interface/ahrs/ahrs_math.hpp
