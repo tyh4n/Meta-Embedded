@@ -80,6 +80,14 @@ public:
      */
      static void set_target_current(motor_id_t id, int target);
 
+    /**
+     *
+     * @param id
+     * @return target
+     */
+    static float get_target_angle(motor_id_t id) { return SKDThread.targetA[id]; }
+    static float get_target_vel(motor_id_t id) { return SKDThread.targetV[id]; }
+
      /**
       * @brief Customized feedback type.
       */
