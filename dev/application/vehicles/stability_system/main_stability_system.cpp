@@ -33,10 +33,10 @@ struct HomingConfig {
     Motor homing configuration table
  */
 static const HomingConfig homing_list[] = {
-    {CANMotorCFG::MOTOR1, CANMotorCFG::MOTOR2, 360.0f, -360.0f, 100.0f, 100.0f, 360.0f},
-    {CANMotorCFG::MOTOR3, CANMotorCFG::MOTOR4, 360.0f, -360.0f, 100.0f, 100.0f, 360.0f},
-    {CANMotorCFG::MOTOR5, CANMotorCFG::MOTOR6, 360.0f, -360.0f, 100.0f, 100.0f, 360.0f},
-    {CANMotorCFG::MOTOR7, CANMotorCFG::MOTOR8, 360.0f, -360.0f, 100.0f, 100.0f, 360.0f},
+    {CANMotorCFG::MOTOR1, CANMotorCFG::MOTOR2, 360.0f, -360.0f, 700.0f, 700.0f, 360.0f},
+    {CANMotorCFG::MOTOR3, CANMotorCFG::MOTOR4, 360.0f, -360.0f, 700.0f, 700.0f, 360.0f},
+    {CANMotorCFG::MOTOR5, CANMotorCFG::MOTOR6, 360.0f, -360.0f, 700.0f, 700.0f, 360.0f},
+    {CANMotorCFG::MOTOR7, CANMotorCFG::MOTOR8, 360.0f, -360.0f, 700.0f, 700.0f, 360.0f},
 };
 
 #define HOMING_GROUP_COUNT (sizeof(homing_list) / sizeof(HomingConfig))
@@ -72,8 +72,12 @@ protected:
 
         // Lower current limits and start moving toward mechanical limit
         for (int i = 0; i < 2; i++) {
-            original_max_out[i] = CANMotorCFG::v2iParams[motors[i]].i_limit;
-            CANMotorCFG::v2iParams[motors[i]].i_limit = current_limit[i];
+            // Update the out_limit (Current Limit)
+            original_max_out[i] = CANMotorCFG::v2iParams[motors[i]].out_limit;
+            CANMotorCFG::v2iParams[motors[i]].out_limit = current_limit[i];
+
+            // Push the updated struct to the live v2i controller
+            CANMotorController::load_PID_params(motors[i], false, CANMotorCFG::v2iParams[motors[i]]);
 
             CANMotorCFG::enable_v2i[motors[i]] = true;
             CANMotorCFG::enable_a2v[motors[i]] = false;
@@ -92,11 +96,6 @@ protected:
             for (int i = 0; i < 2; i++) {
                 if (!stalled[i]) {
                     float current_vel = CANMotorIF::motor_feedback[motors[i]].actual_velocity;
-
-                    if (i == 1)
-                    {
-                        Shell::printf("%.2f" SHELL_NEWLINE_STR, current_vel);
-                    }
 
                     if (current_vel > -5.0f && current_vel < 5.0f) {
                         if (++stall_counter[i] >= 10) {
@@ -117,16 +116,19 @@ protected:
         for (int i = 0; i < 2; i++) {
             CANMotorIF::motor_feedback[motors[i]].reset_accumulate_angle();
 
-            // Restore original current limits and switch to angle control
-            CANMotorCFG::v2iParams[motors[i]].i_limit = original_max_out[i];
+            // 1. Restore the struct
+            CANMotorCFG::v2iParams[motors[i]].out_limit = original_max_out[i];
+
+            // 2. Push the restored struct back to the active controller
+            CANMotorController::load_PID_params(motors[i], false, CANMotorCFG::v2iParams[motors[i]]);
+
             CANMotorCFG::enable_a2v[motors[i]] = true;
 
             float target_angle = (velocity[i] < 0) ? cfg.offset : -cfg.offset;
             CANMotorController::set_target_angle(motors[i], target_angle);
         }
-
         // Wait for motor to reach target angle
-        chThdSleepMilliseconds(2000);
+        chThdSleepMilliseconds(1000);
 
         // Disable a2v control
         for (int i = 0; i < 2; i++) {
@@ -201,8 +203,6 @@ protected:
                 if (solve_linkage_IK(target_tx, target_ty, x1, x2)) {
 
                     // Convert sliders to motor angles based on specifications
-                    // m0 (1, 3, 5, 7) = (x1 + 110) * 360
-                    // m1 (2, 4, 6, 8) = x2 * -360
                     float target_angle_m0 = (x1 + 110.0f) * 360.0f;
                     float target_angle_m1 = x2 * -360.0f;
 

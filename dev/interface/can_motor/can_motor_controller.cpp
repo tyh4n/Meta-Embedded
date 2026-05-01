@@ -51,18 +51,18 @@ int  CANMotorController::get_PID_current(motor_id_t id) {
 }
 
 void CANMotorController::set_target_angle(motor_id_t id, float target) {
-    // Safety Limit
+    // Safety Limit for Position Control
     if (CANMotorCFG::enable_limits[id])
     {
-        float current_angle = CANMotorIF::motor_feedback[id].accumulate_angle();
-
-        if (current_angle <= CANMotorCFG::min_limit_deg[id] && target < 0.0f) {
-            target = 0.0f;
+        // Clamp the absolute target destination to the bounds
+        if (target < CANMotorCFG::min_limit_deg[id]) {
+            target = CANMotorCFG::min_limit_deg[id];
         }
-        else if (current_angle >= CANMotorCFG::max_limit_deg[id] && target > 0.0f) {
-            target = 0.0f;
+        else if (target > CANMotorCFG::max_limit_deg[id]) {
+            target = CANMotorCFG::max_limit_deg[id];
         }
     }
+
     SKDThread.targetA[id] = target;
 }
 
