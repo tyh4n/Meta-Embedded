@@ -6,8 +6,8 @@
 
 CANMotorBase CANMotorCFG::CANMotorProfile[MOTOR_COUNT] = {
         // {CANMotorBase::can_channel_1, 0x205, CANMotorBase::GM6020, 3572},  // 6020
-        {CANMotorBase::can_channel_2, 0x201, CANMotorBase::M2006, 0},  //2006
-        {CANMotorBase::can_channel_2, 0x204, CANMotorBase::M2006, 0},  //2006
+        {CANMotorBase::can_channel_1, 0x201, CANMotorBase::M2006, 0},  //2006
+        {CANMotorBase::can_channel_1, 0x202, CANMotorBase::M2006, 0},  //2006
 };
 
 PIDController::pid_params_t CANMotorCFG::a2vParams[MOTOR_COUNT] = {

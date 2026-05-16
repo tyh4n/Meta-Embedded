@@ -36,7 +36,7 @@ float base_target = 0.0f;
 uint32_t step_duration_ms = 500;
 volatile bool trigger_new_step = false;
 
-CANMotorCFG::motor_id_t tuning_motor_id = CANMotorCFG::MOTOR1;
+CANMotorCFG::motor_id_t tuning_motor_id = CANMotorCFG::MOTOR2;
 
 // --- Telemetry & Control Thread ---
 class PIDTuningThread : public BaseStaticThread<1024> {

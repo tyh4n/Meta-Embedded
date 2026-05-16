@@ -33,10 +33,10 @@ struct HomingConfig {
     Motor homing configuration table
  */
 static const HomingConfig homing_list[] = {
-    {CANMotorCFG::MOTOR1, CANMotorCFG::MOTOR2, 360.0f, -360.0f, 700.0f, 700.0f, 360.0f},
-    {CANMotorCFG::MOTOR3, CANMotorCFG::MOTOR4, 360.0f, -360.0f, 700.0f, 700.0f, 360.0f},
-    {CANMotorCFG::MOTOR5, CANMotorCFG::MOTOR6, 360.0f, -360.0f, 700.0f, 700.0f, 360.0f},
-    {CANMotorCFG::MOTOR7, CANMotorCFG::MOTOR8, 360.0f, -360.0f, 700.0f, 700.0f, 360.0f},
+    {CANMotorCFG::MOTOR1, CANMotorCFG::MOTOR2, 360.0f, -360.0f, 700.0f, 700.0f, 900.0f},
+    {CANMotorCFG::MOTOR3, CANMotorCFG::MOTOR4, 360.0f, -360.0f, 700.0f, 700.0f, 900.0f},
+    {CANMotorCFG::MOTOR5, CANMotorCFG::MOTOR6, 360.0f, -360.0f, 700.0f, 700.0f, 900.0f},
+    {CANMotorCFG::MOTOR7, CANMotorCFG::MOTOR8, 360.0f, -360.0f, 700.0f, 700.0f, 900.0f},
 };
 
 #define HOMING_GROUP_COUNT (sizeof(homing_list) / sizeof(HomingConfig))
@@ -128,7 +128,7 @@ protected:
             CANMotorController::set_target_angle(motors[i], target_angle);
         }
         // Wait for motor to reach target angle
-        chThdSleepMilliseconds(1000);
+        chThdSleepMilliseconds(2000);
 
         // Disable a2v control
         for (int i = 0; i < 2; i++) {

@@ -8,35 +8,35 @@
 
 CANMotorBase CANMotorCFG::CANMotorProfile[MOTOR_COUNT] = {
         {CANMotorBase::can_channel_1, 0x201, CANMotorBase::M2006, 0},
-        {CANMotorBase::can_channel_2, 0x201, CANMotorBase::M2006, 0},
         {CANMotorBase::can_channel_1, 0x202, CANMotorBase::M2006, 0},
-        {CANMotorBase::can_channel_2, 0x202, CANMotorBase::M2006, 0},
         {CANMotorBase::can_channel_1, 0x203, CANMotorBase::M2006, 0},
-        {CANMotorBase::can_channel_2, 0x203, CANMotorBase::M2006, 0},
         {CANMotorBase::can_channel_1, 0x204, CANMotorBase::M2006, 0},
+        {CANMotorBase::can_channel_2, 0x201, CANMotorBase::M2006, 0},
+        {CANMotorBase::can_channel_2, 0x202, CANMotorBase::M2006, 0},
+        {CANMotorBase::can_channel_2, 0x203, CANMotorBase::M2006, 0},
         {CANMotorBase::can_channel_2, 0x204, CANMotorBase::M2006, 0},
 };
 
 PIDController::pid_params_t CANMotorCFG::a2vParams[MOTOR_COUNT] = {
-        {40.0, 0.3f, 0.0, 1000.0, 3000.0},
-        {40.0, 0.3f, 0.0, 1000.0, 3000.0},
-        {40.0, 0.3f, 0.0, 1000.0, 3000.0},
-        {40.0, 0.3f, 0.0, 1000.0, 3000.0},
-        {40.0, 0.3f, 0.0, 1000.0, 3000.0},
-        {40.0, 0.3f, 0.0, 1000.0, 3000.0},
-        {40.0, 0.3f, 0.0, 1000.0, 3000.0},
-        {40.0, 0.3f, 0.0, 1000.0, 3000.0},
+        {40.0, 0.2f, 0.0, 1000.0, 1500.0},
+        {40.0, 0.2f, 0.0, 1000.0, 1500.0},
+        {40.0, 0.2f, 0.0, 1000.0, 1500.0},
+        {40.0, 0.2f, 0.0, 1000.0, 1500.0},
+        {40.0, 0.2f, 0.0, 1000.0, 1500.0},
+        {40.0, 0.2f, 0.0, 1000.0, 1500.0},
+        {40.0, 0.2f, 0.0, 1000.0, 1500.0},
+        {40.0, 0.2f, 0.0, 1000.0, 1500.0},
 };
 
 PIDController::pid_params_t CANMotorCFG::v2iParams[MOTOR_COUNT] = {
-        {120.0f, 0.0f, 0.0f, 100.0, 10000.0},
-        {120.0f, 0.0f, 0.0f, 100.0, 10000.0},
-        {120.0f, 0.0f, 0.0f, 100.0, 10000.0},
-        {120.0f, 0.0f, 0.0f, 100.0, 10000.0},
-        {120.0f, 0.0f, 0.0f, 100.0, 10000.0},
-        {120.0f, 0.0f, 0.0f, 100.0, 10000.0},
-        {120.0f, 0.0f, 0.0f, 100.0, 10000.0},
-        {120.0f, 0.0f, 0.0f, 100.0, 10000.0},
+        {25.0f, 0.0f, 0.0f, 100.0, 10000.0},
+        {25.0f, 0.0f, 0.0f, 100.0, 10000.0},
+        {25.0f, 0.0f, 0.0f, 100.0, 10000.0},
+        {25.0f, 0.0f, 0.0f, 100.0, 10000.0},
+        {25.0f, 0.0f, 0.0f, 100.0, 10000.0},
+        {25.0f, 0.0f, 0.0f, 100.0, 10000.0},
+        {25.0f, 0.0f, 0.0f, 100.0, 10000.0},
+        {25.0f, 0.0f, 0.0f, 100.0, 10000.0},
 };
 
 bool CANMotorCFG::enable_a2v[MOTOR_COUNT] = {
