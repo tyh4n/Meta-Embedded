@@ -18,6 +18,12 @@
 
 using namespace chibios_rt;
 
+// --- Physical Workspace Limits ---
+constexpr float IK_MIN_X = 59.61f;
+constexpr float IK_MAX_X = 172.14f;
+constexpr float IK_MIN_Y = -211.2f; // -161.2 - 50.0
+constexpr float IK_MAX_Y = -161.2f;
+
 // Motor homing configuration struct
 struct HomingConfig {
     CANMotorCFG::motor_id_t m0;
@@ -72,16 +78,12 @@ protected:
 
         // Lower current limits and start moving toward mechanical limit
         for (int i = 0; i < 2; i++) {
-            // Update the out_limit (Current Limit)
             original_max_out[i] = CANMotorCFG::v2iParams[motors[i]].out_limit;
             CANMotorCFG::v2iParams[motors[i]].out_limit = current_limit[i];
-
-            // Push the updated struct to the live v2i controller
             CANMotorController::load_PID_params(motors[i], false, CANMotorCFG::v2iParams[motors[i]]);
 
             CANMotorCFG::enable_v2i[motors[i]] = true;
             CANMotorCFG::enable_a2v[motors[i]] = false;
-
             CANMotorController::set_target_vel(motors[i], velocity[i]);
         }
 
@@ -96,7 +98,6 @@ protected:
             for (int i = 0; i < 2; i++) {
                 if (!stalled[i]) {
                     float current_vel = CANMotorIF::motor_feedback[motors[i]].actual_velocity;
-
                     if (current_vel > -5.0f && current_vel < 5.0f) {
                         if (++stall_counter[i] >= 10) {
                             stalled[i] = true;
@@ -111,29 +112,28 @@ protected:
             chThdSleepMilliseconds(10);
         }
 
-        // Zero accumulate angle and move to PID offset
         chThdSleepMilliseconds(100);
+
+        // Move to PID offset (Back off by 5mm)
         for (int i = 0; i < 2; i++) {
             CANMotorIF::motor_feedback[motors[i]].reset_accumulate_angle();
 
-            // 1. Restore the struct
             CANMotorCFG::v2iParams[motors[i]].out_limit = original_max_out[i];
-
-            // 2. Push the restored struct back to the active controller
             CANMotorController::load_PID_params(motors[i], false, CANMotorCFG::v2iParams[motors[i]]);
 
             CANMotorCFG::enable_a2v[motors[i]] = true;
-
             float target_angle = (velocity[i] < 0) ? cfg.offset : -cfg.offset;
             CANMotorController::set_target_angle(motors[i], target_angle);
         }
-        // Wait for motor to reach target angle
+
+        // Wait for motor to reach the back-off position
         chThdSleepMilliseconds(2000);
 
-        // Disable a2v control
+        // Define this back-off position as absolute zero for IK mapping
         for (int i = 0; i < 2; i++) {
             CANMotorIF::motor_feedback[motors[i]].reset_accumulate_angle();
-            CANMotorCFG::enable_limits[motors[i]] = true;
+            // Relying on Cartesian bounding box, disable motor hardware limits
+            CANMotorCFG::enable_limits[motors[i]] = false;
             CANMotorCFG::enable_a2v[motors[i]] = false;
         }
 
@@ -153,43 +153,35 @@ bool solve_linkage_IK(float tx, float ty, float &x1, float &x2) {
     const float A1_x = 48.0f;
     const float B_x = 0.0f;
 
-    // 1. Pre-calculate the rigid arm geometry (A1 to A3)
     float arm_long = r1 + L_ext;
     float R_sq = (arm_long * arm_long) + (L_perp * L_perp);
     float R = std::sqrt(R_sq);
     float phi_offset = std::atan2(L_perp, arm_long);
 
-    // 2. Solve for A1_y (x2)
     float dx = tx - A1_x;
     float dy_sq = R_sq - (dx * dx);
 
-    if (dy_sq < 0.0f) {
-        return false; // Target X coordinate is physically unreachable
-    }
+    if (dy_sq < 0.0f) return false;
 
     float A1_y = ty + std::sqrt(dy_sq);
     x2 = A1_y;
 
-    // 3. Locate A2 (the joint) to find B
     float theta_A1A3 = std::atan2(ty - A1_y, tx - A1_x);
     float theta_A1A2 = theta_A1A3 - phi_offset;
 
     float A2_x = A1_x + r1 * std::cos(theta_A1A2);
     float A2_y = A1_y + r1 * std::sin(theta_A1A2);
 
-    // 4. Solve for B_y (x1)
     float dx_B = A2_x - B_x;
     float dy_B_sq = (r2 * r2) - (dx_B * dx_B);
 
-    if (dy_B_sq < 0.0f) {
-        return false; // Target configuration results in A2 being too far from Slider B
-    }
+    if (dy_B_sq < 0.0f) return false;
 
     x1 = A2_y - std::sqrt(dy_B_sq);
     return true;
 }
 
-// --- IK Control Thread ---
+// --- IK Control Thread (Idle) ---
 class IKControlThread : public BaseStaticThread<1024> {
 protected:
     void main() final {
@@ -202,20 +194,17 @@ protected:
                 float x1, x2;
                 if (solve_linkage_IK(target_tx, target_ty, x1, x2)) {
 
-                    // Convert sliders to motor angles based on specifications
-                    float target_angle_m0 = (x1 + 110.0f) * 360.0f;
-                    float target_angle_m1 = x2 * -360.0f;
+                    // Slider zero is now at x1=-115 and x2=-5. (180 deg per mm)
+                    float target_angle_m0 = (x1 + 115.0f) * 180.0f;
+                    float target_angle_m1 = (x2 + 5.0f) * -180.0f;
 
-                    // Apply to all configured motor groups
                     for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
-                        // Re-enable a2v control (it was disabled at the end of homing)
                         CANMotorCFG::enable_a2v[homing_list[i].m0] = true;
                         CANMotorCFG::enable_a2v[homing_list[i].m1] = true;
 
                         CANMotorController::set_target_angle(homing_list[i].m0, target_angle_m0);
                         CANMotorController::set_target_angle(homing_list[i].m1, target_angle_m1);
                     }
-
                     Shell::printf("IK Success: Motors moving to X1: %.2f | X2: %.2f" SHELL_NEWLINE_STR, x1, x2);
                 } else {
                     Shell::printf("IK Error: Target coordinates unreachable." SHELL_NEWLINE_STR);
@@ -228,76 +217,84 @@ protected:
 
 // --- Shell Command Handler for IK ---
 bool cmd_set_ik(BaseSequentialStream *chp, int argc, char *argv[]) {
-    (void)chp; // Suppress unused warning
+    (void)chp;
     if (argc != 2) {
         Shell::printf("Usage: ik <tx> <ty>" SHELL_NEWLINE_STR);
         return false;
     }
 
-    target_tx = std::atof(argv[0]);
-    target_ty = std::atof(argv[1]);
+    float tx = std::atof(argv[0]);
+    float ty = std::atof(argv[1]);
+
+    if (tx < IK_MIN_X || tx > IK_MAX_X || ty < IK_MIN_Y || ty > IK_MAX_Y) {
+        Shell::printf("IK Error: Coordinate out of bounds (X: 59.61 to 172.14, Y: -211.2 to -161.2)." SHELL_NEWLINE_STR);
+        return true;
+    }
+
+    target_tx = tx;
+    target_ty = ty;
     new_target_available = true;
 
     Shell::printf("New Target: tx=%.2f, ty=%.2f" SHELL_NEWLINE_STR, target_tx, target_ty);
-
     return true;
 }
 
-// Register the IK command
 static const Shell::Command system_commands[] = {
     {"ik", "Set Inverse Kinematics target (tx ty)", cmd_set_ik, nullptr},
     {nullptr, nullptr, nullptr, nullptr}
 };
 
-
-// Remote Control Thread
+// --- Remote Cartesian Control Thread ---
 class RemoteControlThread : public BaseStaticThread<1024> {
 private:
-    // Define physical limits
-    static constexpr float MAX_DELTA_Y_MM = 54.1f; // Corresponds to -45 degrees
-    static constexpr float MIN_DELTA_Y_MM = 0.0f;  // Corresponds to -90 degrees
+    float current_x = 59.61f;
+    float current_y = -161.2f;
 
-    // Define pitch
-    static constexpr float MM_PER_DEGREE = 2.0f / 360.0f;
+    static constexpr float MAX_SPEED_MM_S = 10.0f;
+    static constexpr float LOOP_DT_S = 0.01f;
 
     void main() final {
         setName("RemoteControl");
 
+        // Engage position hold at physical zero immediately on startup
+        for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+            CANMotorCFG::enable_a2v[homing_list[i].m0] = true;
+            CANMotorCFG::enable_a2v[homing_list[i].m1] = true;
+            CANMotorController::set_target_angle(homing_list[i].m0, 0.0f);
+            CANMotorController::set_target_angle(homing_list[i].m1, 0.0f);
+        }
+
         while (!shouldTerminate()) {
-            float target_vel_1 = Remote::rc.ch0 * 2000.0f;
-            float target_vel_2 = - Remote::rc.ch2 * 2000.0f;
+            float joy_x = Remote::rc.ch3;
+            float joy_y = Remote::rc.ch2;
 
-            // Deadband filter
-            if (target_vel_1 > -100.0f && target_vel_1 < 100.0f) target_vel_1 = 0.0f;
-            if (target_vel_2 > -100.0f && target_vel_2 < 100.0f) target_vel_2 = 0.0f;
+            if (joy_x > -0.05f && joy_x < 0.05f) joy_x = 0.0f;
+            if (joy_y > -0.05f && joy_y < 0.05f) joy_y = 0.0f;
 
-            // Loop through all configured homing groups to apply control
-            for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
-                // Calculate current delta y
-                float y_m0 = CANMotorIF::motor_feedback[homing_list[i].m0].accumulate_angle() * MM_PER_DEGREE;
-                float y_m1 = CANMotorIF::motor_feedback[homing_list[i].m1].accumulate_angle() * MM_PER_DEGREE;
+            if (joy_x != 0.0f || joy_y != 0.0f) {
+                float next_x = current_x + (joy_x * MAX_SPEED_MM_S * LOOP_DT_S);
+                float next_y = current_y + (joy_y * MAX_SPEED_MM_S * LOOP_DT_S);
 
-                // Check -45 degree limit
-                if (y_m0 + y_m1 >= MAX_DELTA_Y_MM) {
-                    // Prevent m0 from moving further positive
-                    if (target_vel_1 > 0.0f) target_vel_1 = 0.0f;
-                    // Prevent m1 from moving further positive
-                    if (target_vel_2 > 0.0f) target_vel_2 = 0.0f;
+                if (next_x < IK_MIN_X) next_x = IK_MIN_X;
+                if (next_x > IK_MAX_X) next_x = IK_MAX_X;
+                if (next_y < IK_MIN_Y) next_y = IK_MIN_Y;
+                if (next_y > IK_MAX_Y) next_y = IK_MAX_Y;
+
+                float x1, x2;
+                if (solve_linkage_IK(next_x, next_y, x1, x2)) {
+                    current_x = next_x;
+                    current_y = next_y;
+
+                    float target_angle_m0 = (x1 + 115.0f) * 180.0f;
+                    float target_angle_m1 = (x2 + 5.0f) * -180.0f;
+
+                    for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+                        CANMotorController::set_target_angle(homing_list[i].m0, target_angle_m0);
+                        CANMotorController::set_target_angle(homing_list[i].m1, target_angle_m1);
+                    }
                 }
-
-                // Check -90 degree limit
-                if (y_m0 + y_m1 <= MIN_DELTA_Y_MM) {
-                    // Prevent m0 from moving further negative
-                    if (target_vel_1 < 0.0f) target_vel_1 = 0.0f;
-                    // Prevent m1 from moving further negative
-                    if (target_vel_2 < 0.0f) target_vel_2 = 0.0f;
-                }
-
-                CANMotorController::set_target_vel(homing_list[i].m0, target_vel_1);
-                CANMotorController::set_target_vel(homing_list[i].m1, target_vel_2);
             }
-
-            sleep(TIME_MS2I(20));
+            sleep(TIME_MS2I(10));
         }
     }
 } remoteControlThread;
@@ -321,7 +318,6 @@ int main(void) {
     halInit();
     System::init();
 
-    // Start the Shell with our custom commands BEFORE anything else
     Shell::addCommands(system_commands);
     Shell::start(HIGHPRIO);
 
@@ -333,13 +329,11 @@ int main(void) {
     can2.start(NORMALPRIO + 1);
     CANMotorController::start(NORMALPRIO + 2, NORMALPRIO + 3, &can1, &can2);
 
-    // Initialize and Start all homing threads from the config list
     for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
         homingThreads[i] = new HomingThread(homing_list[i]);
         homingThreads[i]->start(NORMALPRIO + 4);
     }
 
-    // Block until all motors are homed
     bool all_ready = false;
     while (!all_ready) {
         all_ready = true;
@@ -352,13 +346,11 @@ int main(void) {
         chThdSleepMilliseconds(10);
     }
 
-    // Start Operational Threads
     LED::red_off();
     LED::green_on();
 
-    // Starting the new Inverse Kinematics Control Thread
-    ikControlThread.start(NORMALPRIO + 4);
-
+    // Switch to Remote Control Thread which now uses the Cartesian bounding box logic
+    remoteControlThread.start(NORMALPRIO + 4);
     remoteWatchdogThread.start(NORMALPRIO - 1);
 
 #if CH_CFG_NO_IDLE_THREAD

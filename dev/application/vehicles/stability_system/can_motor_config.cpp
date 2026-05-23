@@ -84,12 +84,12 @@ float CANMotorCFG::min_limit_deg[MOTOR_COUNT] = {
 };
 
 float CANMotorCFG::max_limit_deg[MOTOR_COUNT] = {
-        0.0f,
+        540.0f,
         19800.0f,
-        0.0f,
+        540.0f,
         19800.0f,
-        0.0f,
+        540.0f,
         19800.0f,
-        0.0f,
+        540.0f,
         19800.0f,
 };
