@@ -391,6 +391,11 @@ target_include_directories(ut_chassis PRIVATE dev/application/unit_tests/ut_chas
 target_compile_definitions(ut_chassis PRIVATE ut_chassis)
 target_link_libraries(ut_chassis ${AHRS_LIB})
 
+# SPI
+add_executable(ut_spi
+        dev/application/unit_tests/ut_spi/ut_spi.cpp)
+target_include_directories(ut_spi PRIVATE dev/application/unit_tests/ut_spi)
+
 # --------------------------------------- Param Adjusts ---------------------------------------
 
 #add_executable(pa_hero_gimbal
