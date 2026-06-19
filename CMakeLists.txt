@@ -267,7 +267,8 @@ add_executable(STABILITY_SYSTEM
         ${VEHICLE_COMMON_SRC}
         dev/interface/remote/remote_interpreter.cpp
         dev/application/vehicles/stability_system/can_motor_config.cpp
-        dev/application/vehicles/stability_system/main_stability_system.cpp)
+        dev/application/vehicles/stability_system/main_stability_system.cpp
+        dev/application/vehicles/stability_system/main_stability_system.h)
 target_include_directories(STABILITY_SYSTEM PRIVATE dev/application/vehicles/stability_system)
 
 # Main Program -- Engineer

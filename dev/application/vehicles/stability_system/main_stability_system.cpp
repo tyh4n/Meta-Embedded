@@ -3,41 +3,11 @@
 // main_stability_system.cpp
 //
 
-#include "ch.hpp"
-#include "hal.h"
-
-#include <cmath>
-#include <cstdlib>
-
-#include "led.h"
-#include "shell.h"
-#include "can_motor_interface.h"
-#include "can_motor_controller.h"
-#include "remote_interpreter.h"
-#include "hardware_conf.h"
+#include "main_stability_system.h"
 
 using namespace chibios_rt;
 
-// --- Physical Workspace Limits ---
-constexpr float IK_MIN_X = 59.61f;
-constexpr float IK_MAX_X = 172.14f;
-constexpr float IK_MIN_Y = -211.2f; // -161.2 - 50.0
-constexpr float IK_MAX_Y = -161.2f;
-
-// Motor homing configuration struct
-struct HomingConfig {
-    CANMotorCFG::motor_id_t m0;
-    CANMotorCFG::motor_id_t m1;
-    float velocity0;
-    float velocity1;
-    float current_limit0;
-    float current_limit1;
-    float offset;
-};
-
-/**
-    Motor homing configuration table
- */
+// Motor homing configuration table
 static const HomingConfig homing_list[] = {
     {CANMotorCFG::MOTOR1, CANMotorCFG::MOTOR2, 360.0f, -360.0f, 700.0f, 700.0f, 900.0f},
     {CANMotorCFG::MOTOR3, CANMotorCFG::MOTOR4, 360.0f, -360.0f, 700.0f, 700.0f, 900.0f},
@@ -52,11 +22,29 @@ CANInterface can1(&CAND1);
 CANInterface can2(&CAND2);
 
 // IK Globals
-volatile float target_tx = 0.0f;
-volatile float target_ty = 0.0f;
+volatile float target_r = 272.61f;
+volatile float target_h = 50.0f;
 volatile bool new_target_available = false;
 
-// Homing thread
+// SPI2 Configuration (Slave Mode)
+static const SPIConfig spi2_slave_cfg = {
+    false,                  // circular buffer mode
+    nullptr,                // end callback function pointer
+    nullptr,                // chip select line port
+    0,                      // chip select line pad number
+    SPI_CR1_DFF,            // CR1: 16-bit data frame
+    0                       // CR2
+};
+
+void forceSpiSlave() {
+    SPID2.spi->CR1 &= ~SPI_CR1_SPE;
+    SPID2.spi->CR1 &= ~SPI_CR1_MSTR;
+    SPID2.spi->CR1 &= ~SPI_CR1_SSI;
+    SPID2.spi->CR1 &= ~SPI_CR1_SSM;
+    SPID2.spi->CR1 |= SPI_CR1_SPE;
+}
+
+// Homing Thread
 class HomingThread : public chibios_rt::BaseStaticThread<512> {
 public:
     volatile bool is_homed = false;
@@ -114,7 +102,7 @@ protected:
 
         chThdSleepMilliseconds(100);
 
-        // Move to PID offset (Back off by 5mm)
+        // Move to offset (Back off by 5mm)
         for (int i = 0; i < 2; i++) {
             CANMotorIF::motor_feedback[motors[i]].reset_accumulate_angle();
 
@@ -129,10 +117,8 @@ protected:
         // Wait for motor to reach the back-off position
         chThdSleepMilliseconds(2000);
 
-        // Define this back-off position as absolute zero for IK mapping
         for (int i = 0; i < 2; i++) {
             CANMotorIF::motor_feedback[motors[i]].reset_accumulate_angle();
-            // Relying on Cartesian bounding box, disable motor hardware limits
             CANMotorCFG::enable_limits[motors[i]] = false;
             CANMotorCFG::enable_a2v[motors[i]] = false;
         }
@@ -141,14 +127,16 @@ protected:
     }
 };
 
-// Global array of homing thread pointers
 HomingThread* homingThreads[HOMING_GROUP_COUNT];
 
-// --- Inverse Kinematics Logic ---
-bool solve_linkage_IK(float tx, float ty, float &x1, float &x2) {
+// Inverse Kinematics Logic
+bool solve_linkage_IK(float r_leg, float h_leg, float &x1, float &x2) {
+    float tx = r_leg - 213.0f;
+    float ty = h_leg - 221.2f;
+
     const float r1 = 43.4f;
     const float r2 = 82.09f;
-    const float L_ext = 112.8f;
+    const float L_ext = 122.8f;
     const float L_perp = 11.65f;
     const float A1_x = 48.0f;
     const float B_x = 0.0f;
@@ -181,61 +169,49 @@ bool solve_linkage_IK(float tx, float ty, float &x1, float &x2) {
     return true;
 }
 
-// --- IK Control Thread (Idle) ---
+// UART IK Control Thread
 class IKControlThread : public BaseStaticThread<1024> {
 protected:
     void main() final {
         setName("IKControl");
-
         while (!shouldTerminate()) {
             if (new_target_available) {
                 new_target_available = false;
 
                 float x1, x2;
-                if (solve_linkage_IK(target_tx, target_ty, x1, x2)) {
-
-                    // Slider zero is now at x1=-115 and x2=-5. (180 deg per mm)
+                if (solve_linkage_IK(target_r, target_h, x1, x2)) {
                     float target_angle_m0 = (x1 + 115.0f) * 180.0f;
                     float target_angle_m1 = (x2 + 5.0f) * -180.0f;
 
                     for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
                         CANMotorCFG::enable_a2v[homing_list[i].m0] = true;
                         CANMotorCFG::enable_a2v[homing_list[i].m1] = true;
-
                         CANMotorController::set_target_angle(homing_list[i].m0, target_angle_m0);
                         CANMotorController::set_target_angle(homing_list[i].m1, target_angle_m1);
                     }
-                    Shell::printf("IK Success: Motors moving to X1: %.2f | X2: %.2f" SHELL_NEWLINE_STR, x1, x2);
-                } else {
-                    Shell::printf("IK Error: Target coordinates unreachable." SHELL_NEWLINE_STR);
                 }
             }
-            sleep(TIME_MS2I(20)); // Polling rate
+            sleep(TIME_MS2I(20));
         }
     }
 } ikControlThread;
 
-// --- Shell Command Handler for IK ---
+// Shell Command Handler for IK
 bool cmd_set_ik(BaseSequentialStream *chp, int argc, char *argv[]) {
     (void)chp;
-    if (argc != 2) {
-        Shell::printf("Usage: ik <tx> <ty>" SHELL_NEWLINE_STR);
-        return false;
-    }
+    if (argc != 2) return false;
 
-    float tx = std::atof(argv[0]);
-    float ty = std::atof(argv[1]);
+    float r_cmd = std::atof(argv[0]);
+    float h_cmd = std::atof(argv[1]);
 
-    if (tx < IK_MIN_X || tx > IK_MAX_X || ty < IK_MIN_Y || ty > IK_MAX_Y) {
-        Shell::printf("IK Error: Coordinate out of bounds (X: 59.61 to 172.14, Y: -211.2 to -161.2)." SHELL_NEWLINE_STR);
+    if (r_cmd < IK_MIN_R || r_cmd > IK_MAX_R || h_cmd < IK_MIN_H || h_cmd > IK_MAX_H) {
+        Shell::printf("IK Error: Bounds (R: 272.61 to 385.14, H: 10.0 to 60.0)." SHELL_NEWLINE_STR);
         return true;
     }
 
-    target_tx = tx;
-    target_ty = ty;
+    target_r = r_cmd;
+    target_h = h_cmd;
     new_target_available = true;
-
-    Shell::printf("New Target: tx=%.2f, ty=%.2f" SHELL_NEWLINE_STR, target_tx, target_ty);
     return true;
 }
 
@@ -244,11 +220,11 @@ static const Shell::Command system_commands[] = {
     {nullptr, nullptr, nullptr, nullptr}
 };
 
-// --- Remote Cartesian Control Thread ---
+// Remote Cartesian Control Thread
 class RemoteControlThread : public BaseStaticThread<1024> {
 private:
-    float current_x = 59.61f;
-    float current_y = -161.2f;
+    float current_r = 272.61f;
+    float current_h = 50.0f;
 
     static constexpr float MAX_SPEED_MM_S = 10.0f;
     static constexpr float LOOP_DT_S = 0.01f;
@@ -256,7 +232,6 @@ private:
     void main() final {
         setName("RemoteControl");
 
-        // Engage position hold at physical zero immediately on startup
         for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
             CANMotorCFG::enable_a2v[homing_list[i].m0] = true;
             CANMotorCFG::enable_a2v[homing_list[i].m1] = true;
@@ -272,18 +247,18 @@ private:
             if (joy_y > -0.05f && joy_y < 0.05f) joy_y = 0.0f;
 
             if (joy_x != 0.0f || joy_y != 0.0f) {
-                float next_x = current_x + (joy_x * MAX_SPEED_MM_S * LOOP_DT_S);
-                float next_y = current_y + (joy_y * MAX_SPEED_MM_S * LOOP_DT_S);
+                float next_r = current_r + (joy_x * MAX_SPEED_MM_S * LOOP_DT_S);
+                float next_h = current_h + (joy_y * MAX_SPEED_MM_S * LOOP_DT_S);
 
-                if (next_x < IK_MIN_X) next_x = IK_MIN_X;
-                if (next_x > IK_MAX_X) next_x = IK_MAX_X;
-                if (next_y < IK_MIN_Y) next_y = IK_MIN_Y;
-                if (next_y > IK_MAX_Y) next_y = IK_MAX_Y;
+                if (next_r < IK_MIN_R) next_r = IK_MIN_R;
+                if (next_r > IK_MAX_R) next_r = IK_MAX_R;
+                if (next_h < IK_MIN_H) next_h = IK_MIN_H;
+                if (next_h > IK_MAX_H) next_h = IK_MAX_H;
 
                 float x1, x2;
-                if (solve_linkage_IK(next_x, next_y, x1, x2)) {
-                    current_x = next_x;
-                    current_y = next_y;
+                if (solve_linkage_IK(next_r, next_h, x1, x2)) {
+                    current_r = next_r;
+                    current_h = next_h;
 
                     float target_angle_m0 = (x1 + 115.0f) * 180.0f;
                     float target_angle_m1 = (x2 + 5.0f) * -180.0f;
@@ -298,6 +273,58 @@ private:
         }
     }
 } remoteControlThread;
+
+// SPI Cartesian Control Thread
+class SPIControlThread : public BaseStaticThread<1024> {
+    void main() final {
+        setName("SPIControl");
+        uint16_t rx_buffer[5];
+
+        while(!shouldTerminate()) {
+            spiReceive(&SPID2, 5, rx_buffer);
+
+            if (rx_buffer[0] == 0xAAAA) {
+                float_int target_r;
+                float_int target_h;
+
+                target_r.parts[0] = rx_buffer[1];
+                target_r.parts[1] = rx_buffer[2];
+                target_h.parts[0] = rx_buffer[3];
+                target_h.parts[1] = rx_buffer[4];
+
+                float tr = target_r.value;
+                float th = target_h.value;
+
+                // Enforce physical bounding box limits
+                if (tr < IK_MIN_R) tr = IK_MIN_R;
+                if (tr > IK_MAX_R) tr = IK_MAX_R;
+                if (th < IK_MIN_H) th = IK_MIN_H;
+                if (th > IK_MAX_H) th = IK_MAX_H;
+
+                float x1, x2;
+                if (solve_linkage_IK(tr, th, x1, x2)) {
+                    float target_angle_m0 = (x1 + 115.0f) * 180.0f;
+                    float target_angle_m1 = (x2 + 5.0f) * -180.0f;
+
+                    for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+                        CANMotorCFG::enable_a2v[homing_list[i].m0] = true;
+                        CANMotorCFG::enable_a2v[homing_list[i].m1] = true;
+
+                        CANMotorController::set_target_angle(homing_list[i].m0, target_angle_m0);
+                        CANMotorController::set_target_angle(homing_list[i].m1, target_angle_m1);
+                    }
+                }
+            } else {
+                Shell::printf("SPI Sync Lost! RX[0]=0x%04X" SHELL_NEWLINE_STR, rx_buffer[0]);
+                spiStop(&SPID2);
+                spiStart(&SPID2, &spi2_slave_cfg);
+                forceSpiSlave();
+            }
+
+            sleep(TIME_MS2I(5));
+        }
+    }
+} spiControlThread;
 
 // Watchdog Thread
 class RemoteWatchdogThread : public chibios_rt::BaseStaticThread<256> {
@@ -324,7 +351,8 @@ int main(void) {
     LED::all_off();
     LED::red_on();
 
-    Remote::start();
+    // Remote::start();
+
     can1.start(NORMALPRIO);
     can2.start(NORMALPRIO + 1);
     CANMotorController::start(NORMALPRIO + 2, NORMALPRIO + 3, &can1, &can2);
@@ -346,12 +374,17 @@ int main(void) {
         chThdSleepMilliseconds(10);
     }
 
+    // Start SPI Driver
+    spiStart(&SPID2, &spi2_slave_cfg);
+    forceSpiSlave();
+
     LED::red_off();
     LED::green_on();
 
-    // Switch to Remote Control Thread which now uses the Cartesian bounding box logic
-    remoteControlThread.start(NORMALPRIO + 4);
-    remoteWatchdogThread.start(NORMALPRIO - 1);
+    // Start Threads. Be cautious if running multiple threads commanding the same motors!
+    // remoteControlThread.start(NORMALPRIO + 4);
+    spiControlThread.start(NORMALPRIO + 5);
+    // remoteWatchdogThread.start(NORMALPRIO - 1);
 
 #if CH_CFG_NO_IDLE_THREAD
     while (true) {}
