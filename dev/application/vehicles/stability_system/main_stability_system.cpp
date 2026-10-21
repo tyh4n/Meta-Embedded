@@ -143,7 +143,6 @@ bool solve_linkage_IK(float r_leg, float h_leg, float &x1, float &x2) {
 
     float arm_long = r1 + L_ext;
     float R_sq = (arm_long * arm_long) + (L_perp * L_perp);
-    float R = std::sqrt(R_sq);
     float phi_offset = std::atan2(L_perp, arm_long);
 
     float dx = tx - A1_x;

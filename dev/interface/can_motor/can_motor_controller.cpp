@@ -30,7 +30,7 @@ void CANMotorController::start(tprio_t SKD_PRIO, tprio_t FB_PRIO, CANInterface *
 }
 
 void CANMotorController::load_PID_params(motor_id_t id, bool is_a2v, PIDController::pid_params_t params) {
-    if(id < 0 || id >= MOTOR_COUNT) return; // Check validation
+    if(id >= MOTOR_COUNT) return; // Check validation
     if(is_a2v) {
         a2vController[id].change_parameters(params);
     } else {
@@ -190,7 +190,7 @@ void CANMotorController::skdThread::main() {
 void CANMotorController::feedbackThread::main() {
     setName("feedback");
     while(!shouldTerminate()) {
-        if(disp_id >= 0 && disp_id < MOTOR_COUNT) {
+        if(disp_id < MOTOR_COUNT) {
             /**TODO: re-enable Shell and display feedback*/
             /* Shell::printf("!gy,%u,%.2f,%.2f,%.2f,%.2f,%d,%d" SHELL_NEWLINE_STR,
                                 SYSTIME,

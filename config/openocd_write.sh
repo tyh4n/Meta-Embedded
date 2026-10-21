@@ -1,16 +1,19 @@
-#!/bin/sh
-# ----------------------------------------------------------------
-# This script invokes OpenOCD to write the program and reset the chip
-#
-# Initial version. July 16 2018 liuzikai
-# Move reset config to .cfg file and support --no-exit argument. Jan 30 2019 liuzikai
-# ----------------------------------------------------------------
+#!/usr/bin/env bash
+set -euo pipefail
 
-if [[ $1 != "--no-exit" ]]; then
-    exit_cmd="exit"
-else
-    exit_cmd=""
-    echo "[Notice] OpenOCD will flash, reset and halt the program, and keep running as server after writing program."
-fi
-set -x
-openocd -f RM_Board_Mac.cfg -c "program ../build/meta.elf verify reset $exit_cmd"
+usage() {
+    echo "Usage: $0 <firmware.elf>" >&2
+    exit 2
+}
+
+[[ $# -eq 1 ]] || usage
+elf="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+[[ -f "$elf" ]] || { echo "Firmware not found: $elf" >&2; exit 1; }
+
+project_root="$(cd "$(dirname "$0")/.." && pwd)"
+openocd_bin="${OPENOCD_BIN:-$(command -v openocd || true)}"
+[[ -n "$openocd_bin" ]] || { echo "OpenOCD not found; install it or set OPENOCD_BIN." >&2; exit 1; }
+
+exec "$openocd_bin" \
+    -f "$project_root/config/openocd_stm32f4.cfg" \
+    -c "program \"$elf\" verify reset exit"

@@ -5,12 +5,21 @@
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_VERSION 1)
 set(CMAKE_SYSTEM_PROCESSOR arm)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
 # ---------- Toolchain Configurations ----------
 
-# The following lines set the toolchain. Setting toolchain in CLion preference is also valid.
+# Prefer an explicit toolchain directory from CMake presets or the environment.
+# Falling back to PATH keeps direct CMake invocations working as before.
+if(DEFINED ENV{ARM_NONE_EABI_TOOLCHAIN_DIR} AND NOT "$ENV{ARM_NONE_EABI_TOOLCHAIN_DIR}" STREQUAL "")
+    file(TO_CMAKE_PATH "$ENV{ARM_NONE_EABI_TOOLCHAIN_DIR}" TOOLCHAIN_DIR)
+    string(REGEX REPLACE "/+$" "" TOOLCHAIN_DIR "${TOOLCHAIN_DIR}")
+    set(TOOLCHAIN_PREFIX "${TOOLCHAIN_DIR}/arm-none-eabi-")
+    message("[Notice] ARM GNU Toolchain: ${TOOLCHAIN_DIR}")
+else()
+    set(TOOLCHAIN_PREFIX arm-none-eabi-)
+endif()
 
-set(TOOLCHAIN_PREFIX arm-none-eabi-)
 set(CMAKE_C_COMPILER   ${TOOLCHAIN_PREFIX}gcc    )
 set(CMAKE_ASM_COMPILER ${TOOLCHAIN_PREFIX}gcc    )
 set(CMAKE_CXX_COMPILER ${TOOLCHAIN_PREFIX}g++    )

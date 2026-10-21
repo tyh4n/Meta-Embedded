@@ -13,6 +13,56 @@ ZJU-UIUC Meta RoboMaster Team's Embedded Control Program, based on ChibiOS/RT. T
 The project contains the standard, engineer, hero and sentry vehicles source code and is compatible with RM board 2018 A
 and RM board 2017. With CMake, the code for each robot could be built by switching the target of CMake.
 
+## macOS arm64 快速开始 | Quick Start on macOS arm64
+
+首次配置：
+
+```bash
+./scripts/bootstrap-macos.sh
+```
+
+构建并烧录（参数依次为 target、board、build type）：
+
+```bash
+./scripts/build-flash.sh ut_blink 2018a
+./scripts/build-flash.sh STABILITY_SYSTEM 2018a release
+./scripts/build-flash.sh HERO c
+```
+
+只构建、不烧录：
+
+```bash
+./scripts/build-flash.sh --no-flash ut_blink 2018a
+```
+
+检查环境：
+
+```bash
+./scripts/doctor.sh
+```
+
+工具链路径由 `ARM_NONE_EABI_TOOLCHAIN_DIR` 显式传入，默认用户目录为
+`$HOME/.local/opt/arm-none-eabi/bin`。不同板型和 build type 使用不同 CMake preset 与构建目录，
+不会互相覆盖：
+
+```text
+build/mac-arm64-2018a-debug/
+build/mac-arm64-2018a-release/
+build/mac-arm64-c-debug/
+build/mac-arm64-c-release/
+```
+
+CLion 中应使用 `Use Default` Toolchain，并选择对应的 `mac-arm64-*` CMake preset。
+OpenOCD 的全局路径只设置一次：
+
+```text
+Settings → Build, Execution, Deployment → Embedded Development
+OpenOCD location: /opt/homebrew/bin/openocd
+```
+
+CLion 的 Run/Flash 按钮仍然可用。它与 `build-flash.sh` 使用相同的 CMake target 和 ELF 输出；
+脚本适合终端与自动化，CLion 适合断点调试和日常编辑。
+
 
 # 基本结构 | Basic Structures
 

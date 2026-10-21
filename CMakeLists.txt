@@ -8,13 +8,9 @@ include(config/toolchain.cmake)  # include cross compile configurations
 
 set(CMAKE_CXX_STANDARD 11)
 
-# Check dev board definition
-# NOTICE: ${BOARD_NAME} needs to be specific externally
-# NOTICE: if you want to adapt this project to a new board, be sure to also set startup file in compile_options.cmake
-if (NOT DEFINED BOARD_NAME)
-    set(BOARD_NAME rm_board_c)
-    #    message(FATAL_ERROR "[ERROR] No specific dev board. Do you forget to add -DBOARD_NAMD=\"***\" to CMake options?")
-endif ()
+# Check dev board definition. Presets provide one isolated build directory per board.
+set(BOARD_NAME "rm_board_c" CACHE STRING "Target board")
+set_property(CACHE BOARD_NAME PROPERTY STRINGS rm_board_2017 rm_board_2018_a rm_board_c)
 
 if ((${BOARD_NAME} STREQUAL rm_board_2017) OR (${BOARD_NAME} STREQUAL rm_board_2018_a) OR (${BOARD_NAME} STREQUAL rm_board_c))
     message("[Notice] Current profile is configurated for dev board \"${BOARD_NAME}\".")
@@ -471,10 +467,10 @@ target_compile_definitions(ca_ahrs_hero PRIVATE HERO)
 
 # ================================= Post Configurations for all targets =================================
 
-# Make all targets compile to this filename to allow upload script to work properly
-set(ELF_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/build)
-set(ELF_OUTPUT_NAME meta.elf)
-message("[Notice] All executables are built to ${ELF_OUTPUT_PATH}/${ELF_OUTPUT_NAME}")
+# Keep artifacts inside the active preset build tree so board profiles cannot
+# overwrite each other. CLion discovers the updated target artifact location.
+set(ELF_OUTPUT_PATH "${CMAKE_BINARY_DIR}/bin")
+message("[Notice] ELF files are written to ${ELF_OUTPUT_PATH}/<target>.elf")
 
 add_definitions(-DBUILD_TARGET_NAME="$<TARGET_PROPERTY:NAME>")
 
@@ -489,17 +485,17 @@ foreach (target ${TARGET_LIST})
 
         # Echo target dev board before link
         add_custom_command(TARGET ${target} PRE_BUILD
-                COMMENT "Build for ${BOARD_NAME}")
+                COMMAND ${CMAKE_COMMAND} -E echo "Build for ${BOARD_NAME}")
 
         # Run size utility after link to show the size of elf file
         add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND echo
-                COMMAND ${CMAKE_SIZE_UTILITY} ${ELF_OUTPUT_PATH}/${ELF_OUTPUT_NAME}
+                COMMAND ${CMAKE_SIZE_UTILITY} ${ELF_OUTPUT_PATH}/${target}.elf
                 COMMAND echo)  # execute size utility to show size of executable file
 
         # Set unique output file
         set_target_properties(${target} PROPERTIES
                 RUNTIME_OUTPUT_DIRECTORY ${ELF_OUTPUT_PATH}
-                OUTPUT_NAME ${ELF_OUTPUT_NAME})  #
+                OUTPUT_NAME ${target}.elf)  #
     endif ()
 endforeach (target)
