@@ -1,0 +1,58 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "mac-arm64-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      },
+      "environment": {
+        "ARM_NONE_EABI_TOOLCHAIN_DIR": "$env{HOME}/.local/opt/arm-none-eabi/bin"
+      }
+    },
+    {
+      "name": "mac-arm64-2018a-debug",
+      "displayName": "macOS arm64 / RM Board 2018 A / Debug",
+      "inherits": "mac-arm64-base",
+      "cacheVariables": {
+        "BOARD_NAME": "rm_board_2018_a",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "mac-arm64-2018a-release",
+      "displayName": "macOS arm64 / RM Board 2018 A / Release",
+      "inherits": "mac-arm64-base",
+      "cacheVariables": {
+        "BOARD_NAME": "rm_board_2018_a",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "mac-arm64-c-debug",
+      "displayName": "macOS arm64 / RM Board C / Debug",
+      "inherits": "mac-arm64-base",
+      "cacheVariables": {
+        "BOARD_NAME": "rm_board_c",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "mac-arm64-c-release",
+      "displayName": "macOS arm64 / RM Board C / Release",
+      "inherits": "mac-arm64-base",
+      "cacheVariables": {
+        "BOARD_NAME": "rm_board_c",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ]
+}
