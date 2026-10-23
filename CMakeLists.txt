@@ -393,6 +393,12 @@ add_executable(ut_spi
         dev/application/unit_tests/ut_spi/ut_spi.cpp)
 target_include_directories(ut_spi PRIVATE dev/application/unit_tests/ut_spi)
 
+# Board C user button: toggle red/green on each PA0 press.
+add_executable(ut_button
+        dev/application/unit_tests/ut_button/ut_button.cpp)
+target_include_directories(ut_button PRIVATE
+        dev/application/unit_tests/ut_button)
+
 # --------------------------------------- Param Adjusts ---------------------------------------
 
 #add_executable(pa_hero_gimbal

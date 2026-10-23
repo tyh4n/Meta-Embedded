@@ -8,6 +8,8 @@
 #include "ch.hpp"
 #include "hal.h"
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 
 #include "led.h"
@@ -22,6 +24,28 @@ constexpr float IK_MIN_R = 272.61f;
 constexpr float IK_MAX_R = 385.14f;
 constexpr float IK_MIN_H = 0.0f;
 constexpr float IK_MAX_H = 50.0f;
+
+// --- TI <-> STM32 SPI Protocol ---
+constexpr uint16_t SPI_FRAME_MAGIC = 0xA55A;
+constexpr size_t SPI_LEG_COUNT = 4;
+constexpr size_t SPI_FIRST_POSITION_WORD = 3;
+constexpr size_t SPI_FRAME_WORDS =
+        SPI_FIRST_POSITION_WORD + (2 * SPI_LEG_COUNT) + 1;
+
+enum SpiCommand : uint16_t {
+    SPI_CMD_NONE = 0,
+    SPI_CMD_SET_TARGET = 1,
+    SPI_CMD_QUERY = 2,
+    SPI_CMD_HOME = 3,
+};
+
+enum SpiStatus : uint16_t {
+    SPI_STATUS_UNHOMED = 0,
+    SPI_STATUS_READY = 1,
+    SPI_STATUS_INVALID = 2,
+};
+
+uint16_t spi_crc16_words(const uint16_t *words, size_t count);
 
 /**
  * @brief Configuration parameters for motor homing sequences.
@@ -55,6 +79,8 @@ union float_int {
  */
 bool solve_linkage_IK(float r_leg, float h_leg, float &x1, float &x2);
 
+bool solve_linkage_FK(float x1, float x2, float &r_leg, float &h_leg);
+
 /**
  * @brief Shell command handler for manually setting an IK target.
  * * @param chp Pointer to the BaseSequentialStream for shell output.
@@ -68,5 +94,8 @@ bool cmd_set_ik(BaseSequentialStream *chp, int argc, char *argv[]);
  * @brief Overrides ChibiOS defaults to force the SPI2 driver into hardware slave mode.
  */
 void forceSpiSlave();
+
+bool spiSlaveConfigured();
+bool ensureSpiSlave();
 
 #endif // MAIN_STABILITY_SYSTEM_H

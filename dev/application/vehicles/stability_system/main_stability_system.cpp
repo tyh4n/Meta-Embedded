@@ -25,6 +25,11 @@ CANInterface can2(&CAND2);
 volatile float target_r = 272.61f;
 volatile float target_h = 50.0f;
 volatile bool new_target_available = false;
+volatile bool stability_homed = false;
+volatile bool homing_request_pending = false;
+volatile bool homing_active = false;
+volatile float spi_target_r[SPI_LEG_COUNT] = {272.61f, 272.61f, 272.61f, 272.61f};
+volatile float spi_target_h[SPI_LEG_COUNT] = {50.0f, 50.0f, 50.0f, 50.0f};
 
 // SPI2 Configuration (Slave Mode)
 static const SPIConfig spi2_slave_cfg = {
@@ -44,6 +49,35 @@ void forceSpiSlave() {
     SPID2.spi->CR1 |= SPI_CR1_SPE;
 }
 
+bool spiSlaveConfigured() {
+    const uint32_t cr1 = SPID2.spi->CR1;
+    const uint32_t mismatch = SPI_CR1_MSTR | SPI_CR1_SSM |
+                              SPI_CR1_CPOL | SPI_CR1_CPHA | SPI_CR1_LSBFIRST;
+    return (cr1 & mismatch) == 0U &&
+           (cr1 & SPI_CR1_SPE) != 0U &&
+           (cr1 & SPI_CR1_DFF) != 0U;
+}
+
+bool ensureSpiSlave() {
+    if (spiSlaveConfigured()) {
+        return true;
+    }
+    forceSpiSlave();
+    return spiSlaveConfigured();
+}
+
+uint16_t spi_crc16_words(const uint16_t *words, size_t count) {
+    uint16_t crc = 0xFFFFU;
+    for (size_t i = 0; i < count; i++) {
+        crc ^= words[i];
+        for (uint8_t bit = 0; bit < 8U; bit++) {
+            crc = (crc & 1U) ? static_cast<uint16_t>((crc >> 1U) ^ 0xA001U)
+                             : static_cast<uint16_t>(crc >> 1U);
+        }
+    }
+    return crc;
+}
+
 // Homing Thread
 class HomingThread : public chibios_rt::BaseStaticThread<512> {
 public:
@@ -54,6 +88,7 @@ private:
 
 public:
     HomingThread(HomingConfig config) : cfg(config) {}
+    virtual ~HomingThread() = default;
 
 protected:
     void main() final {
@@ -127,7 +162,75 @@ protected:
     }
 };
 
-HomingThread* homingThreads[HOMING_GROUP_COUNT];
+static bool runHomingCycle() {
+    HomingThread *threads[HOMING_GROUP_COUNT] = {};
+    ThreadReference references[HOMING_GROUP_COUNT];
+    bool all_started = true;
+
+    for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+        references[i] = ThreadReference(nullptr);
+        threads[i] = new HomingThread(homing_list[i]);
+        if (threads[i] == nullptr) {
+            all_started = false;
+            continue;
+        }
+        references[i] = threads[i]->start(NORMALPRIO + 4);
+        if (references[i].isNull()) {
+            all_started = false;
+        }
+    }
+
+    for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+        if (!references[i].isNull()) {
+            references[i].wait();
+        }
+    }
+
+    for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
+        delete threads[i];
+    }
+    return all_started;
+}
+
+static void requestHoming() {
+    chSysLock();
+    if (!homing_active) {
+        stability_homed = false;
+        homing_active = true;
+        homing_request_pending = true;
+    }
+    chSysUnlock();
+}
+
+class HomingManagerThread : public BaseStaticThread<512> {
+private:
+    void main() final {
+        setName("HomeManager");
+        while (!shouldTerminate()) {
+            if (homing_request_pending) {
+                chSysLock();
+                homing_request_pending = false;
+                chSysUnlock();
+                LED::green_off();
+                LED::red_on();
+
+                const bool homed = runHomingCycle();
+                chSysLock();
+                stability_homed = homed;
+                homing_active = false;
+                chSysUnlock();
+
+                LED::red_off();
+                if (homed) {
+                    LED::green_on();
+                } else {
+                    LED::red_on();
+                }
+            }
+            sleep(TIME_MS2I(10));
+        }
+    }
+} homingManagerThread;
 
 // Inverse Kinematics Logic
 bool solve_linkage_IK(float r_leg, float h_leg, float &x1, float &x2) {
@@ -165,6 +268,95 @@ bool solve_linkage_IK(float r_leg, float h_leg, float &x1, float &x2) {
     if (dy_B_sq < 0.0f) return false;
 
     x1 = A2_y - std::sqrt(dy_B_sq);
+    return true;
+}
+
+bool solve_linkage_FK(float x1, float x2, float &r_leg, float &h_leg) {
+    const float r1 = 43.4f;
+    const float r2 = 82.09f;
+    const float L_ext = 122.8f;
+    const float L_perp = 11.65f;
+    const float A1_x = 48.0f;
+    const float arm_long = r1 + L_ext;
+    const float target_radius =
+            std::sqrt((arm_long * arm_long) + (L_perp * L_perp));
+    const float phi_offset = std::atan2(L_perp, arm_long);
+
+    const float dx = A1_x;
+    const float dy = x2 - x1;
+    const float d_sq = (dx * dx) + (dy * dy);
+    if (d_sq < 1.0e-6f) {
+        return false;
+    }
+
+    const float d = std::sqrt(d_sq);
+    const float a = ((r2 * r2) - (r1 * r1) + d_sq) / (2.0f * d);
+    const float h_sq = (r2 * r2) - (a * a);
+    if (h_sq < 0.0f) {
+        return false;
+    }
+
+    const float h = std::sqrt(h_sq);
+    const float p_x = (a * dx) / d;
+    const float p_y = x1 + ((a * dy) / d);
+    const float ax = p_x + ((h * dy) / d);
+    const float ay = p_y - ((h * dx) / d);
+    if (ax <= 0.0f) {
+        return false;
+    }
+
+    const float theta_A1A2 = std::atan2(ay - x2, ax - A1_x);
+    const float theta_A1A3 = theta_A1A2 + phi_offset;
+    const float tx = A1_x + (target_radius * std::cos(theta_A1A3));
+    const float ty = x2 + (target_radius * std::sin(theta_A1A3));
+    if (!std::isfinite(tx) || !std::isfinite(ty)) {
+        return false;
+    }
+
+    r_leg = tx + 213.0f;
+    h_leg = ty + 221.2f;
+    return true;
+}
+
+static bool read_current_position(size_t leg, float &r, float &h) {
+    if (!stability_homed || leg >= HOMING_GROUP_COUNT ||
+        leg >= SPI_LEG_COUNT) {
+        return false;
+    }
+    const float angle0 =
+            CANMotorIF::motor_feedback[homing_list[leg].m0].accumulate_angle();
+    const float angle1 =
+            CANMotorIF::motor_feedback[homing_list[leg].m1].accumulate_angle();
+    return solve_linkage_FK((angle0 / 180.0f) - 115.0f,
+                            (-angle1 / 180.0f) - 5.0f, r, h);
+}
+
+static bool apply_cartesian_target(size_t leg, float r, float h) {
+    constexpr float WIRE_ROUNDING_TOLERANCE = 0.051f;
+    if (leg >= HOMING_GROUP_COUNT || leg >= SPI_LEG_COUNT ||
+        !std::isfinite(r) || !std::isfinite(h) ||
+        r < (IK_MIN_R - WIRE_ROUNDING_TOLERANCE) ||
+        r > (IK_MAX_R + WIRE_ROUNDING_TOLERANCE) ||
+        h < IK_MIN_H || h > IK_MAX_H) {
+        return false;
+    }
+
+    float x1, x2;
+    if (!solve_linkage_IK(r, h, x1, x2)) {
+        return false;
+    }
+    const float target_angle_m0 = (x1 + 115.0f) * 180.0f;
+    const float target_angle_m1 = (x2 + 5.0f) * -180.0f;
+    if (!std::isfinite(target_angle_m0) || !std::isfinite(target_angle_m1)) {
+        return false;
+    }
+
+    CANMotorCFG::enable_a2v[homing_list[leg].m0] = true;
+    CANMotorCFG::enable_a2v[homing_list[leg].m1] = true;
+    CANMotorController::set_target_angle(homing_list[leg].m0, target_angle_m0);
+    CANMotorController::set_target_angle(homing_list[leg].m1, target_angle_m1);
+    spi_target_r[leg] = r;
+    spi_target_h[leg] = h;
     return true;
 }
 
@@ -275,52 +467,97 @@ private:
 
 // SPI Cartesian Control Thread
 class SPIControlThread : public BaseStaticThread<1024> {
+private:
+    static uint16_t position_to_wire(float value) {
+        return static_cast<uint16_t>(std::lround(value * 10.0f));
+    }
+
+    static size_t r_word(size_t leg) {
+        return SPI_FIRST_POSITION_WORD + (2 * leg);
+    }
+
+    static void finalize_frame(uint16_t *frame) {
+        frame[0] = SPI_FRAME_MAGIC;
+        frame[SPI_FRAME_WORDS - 1] =
+                spi_crc16_words(frame, SPI_FRAME_WORDS - 1);
+    }
+
+    static bool valid_frame(const uint16_t *frame) {
+        return frame[0] == SPI_FRAME_MAGIC &&
+               frame[SPI_FRAME_WORDS - 1] ==
+                       spi_crc16_words(frame, SPI_FRAME_WORDS - 1);
+    }
+
     void main() final {
         setName("SPIControl");
-        uint16_t rx_buffer[5];
+        uint16_t rx_frame[SPI_FRAME_WORDS] = {};
+        uint16_t tx_frame[SPI_FRAME_WORDS] = {};
+        uint16_t reply_seq = 0;
+        uint16_t reply_command = SPI_CMD_NONE;
+        SpiStatus reply_status = SPI_STATUS_UNHOMED;
 
-        while(!shouldTerminate()) {
-            spiReceive(&SPID2, 5, rx_buffer);
-
-            if (rx_buffer[0] == 0xAAAA) {
-                float_int target_r;
-                float_int target_h;
-
-                target_r.parts[0] = rx_buffer[1];
-                target_r.parts[1] = rx_buffer[2];
-                target_h.parts[0] = rx_buffer[3];
-                target_h.parts[1] = rx_buffer[4];
-
-                float tr = target_r.value;
-                float th = target_h.value;
-
-                // Enforce physical bounding box limits
-                if (tr < IK_MIN_R) tr = IK_MIN_R;
-                if (tr > IK_MAX_R) tr = IK_MAX_R;
-                if (th < IK_MIN_H) th = IK_MIN_H;
-                if (th > IK_MAX_H) th = IK_MAX_H;
-
-                float x1, x2;
-                if (solve_linkage_IK(tr, th, x1, x2)) {
-                    float target_angle_m0 = (x1 + 115.0f) * 180.0f;
-                    float target_angle_m1 = (x2 + 5.0f) * -180.0f;
-
-                    for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
-                        CANMotorCFG::enable_a2v[homing_list[i].m0] = true;
-                        CANMotorCFG::enable_a2v[homing_list[i].m1] = true;
-
-                        CANMotorController::set_target_angle(homing_list[i].m0, target_angle_m0);
-                        CANMotorController::set_target_angle(homing_list[i].m1, target_angle_m1);
-                    }
-                }
-            } else {
-                Shell::printf("SPI Sync Lost! RX[0]=0x%04X" SHELL_NEWLINE_STR, rx_buffer[0]);
-                spiStop(&SPID2);
-                spiStart(&SPID2, &spi2_slave_cfg);
-                forceSpiSlave();
+        while (!shouldTerminate()) {
+            if (!ensureSpiSlave()) {
+                sleep(TIME_MS2I(20));
+                continue;
             }
 
-            sleep(TIME_MS2I(5));
+            tx_frame[0] = SPI_FRAME_MAGIC;
+            tx_frame[1] = reply_seq;
+            tx_frame[2] = static_cast<uint16_t>(
+                    (reply_command << 8U) | static_cast<uint16_t>(reply_status));
+            for (size_t leg = 0; leg < SPI_LEG_COUNT; leg++) {
+                float current_r = spi_target_r[leg];
+                float current_h = spi_target_h[leg];
+                (void) read_current_position(leg, current_r, current_h);
+                tx_frame[r_word(leg)] = position_to_wire(current_r);
+                tx_frame[r_word(leg) + 1] = position_to_wire(current_h);
+            }
+            finalize_frame(tx_frame);
+
+            spiExchange(&SPID2, SPI_FRAME_WORDS, tx_frame, rx_frame);
+            if (!valid_frame(rx_frame)) {
+                continue;
+            }
+
+            reply_seq = rx_frame[1];
+            reply_command = (rx_frame[2] >> 8U) & 0xFFU;
+            switch (reply_command) {
+                case SPI_CMD_HOME:
+                    requestHoming();
+                    reply_status = SPI_STATUS_UNHOMED;
+                    break;
+
+                case SPI_CMD_QUERY:
+                    reply_status = stability_homed
+                                           ? SPI_STATUS_READY
+                                           : SPI_STATUS_UNHOMED;
+                    break;
+
+                case SPI_CMD_SET_TARGET:
+                    if (!stability_homed) {
+                        reply_status = SPI_STATUS_UNHOMED;
+                    } else {
+                        bool all_valid = true;
+                        for (size_t leg = 0; leg < SPI_LEG_COUNT; leg++) {
+                            const float r =
+                                    static_cast<float>(rx_frame[r_word(leg)]) / 10.0f;
+                            const float h =
+                                    static_cast<float>(rx_frame[r_word(leg) + 1]) / 10.0f;
+                            if (!apply_cartesian_target(leg, r, h)) {
+                                all_valid = false;
+                            }
+                        }
+                        reply_status = all_valid
+                                               ? SPI_STATUS_READY
+                                               : SPI_STATUS_INVALID;
+                    }
+                    break;
+
+                default:
+                    reply_status = SPI_STATUS_INVALID;
+                    break;
+            }
         }
     }
 } spiControlThread;
@@ -340,6 +577,30 @@ private:
     }
 } remoteWatchdogThread;
 
+static void waitForHomingButton() {
+    palSetPadMode(GPIOA, GPIOA_USER_BUTTON, PAL_MODE_INPUT_PULLUP);
+
+    bool stable_pressed = false;
+    uint8_t debounce_count = 0;
+
+    while (true) {
+        const bool raw_pressed =
+                palReadPad(GPIOA, GPIOA_USER_BUTTON) == PAL_LOW;
+
+        if (raw_pressed == stable_pressed) {
+            debounce_count = 0;
+        } else if (++debounce_count >= 3U) {
+            stable_pressed = raw_pressed;
+            debounce_count = 0;
+            if (stable_pressed) {
+                return;
+            }
+        }
+
+        chThdSleepMilliseconds(10);
+    }
+}
+
 int main(void) {
     halInit();
     System::init();
@@ -356,32 +617,24 @@ int main(void) {
     can2.start(NORMALPRIO + 1);
     CANMotorController::start(NORMALPRIO + 2, NORMALPRIO + 3, &can1, &can2);
 
-    for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
-        homingThreads[i] = new HomingThread(homing_list[i]);
-        homingThreads[i]->start(NORMALPRIO + 4);
-    }
+    waitForHomingButton();
 
-    bool all_ready = false;
-    while (!all_ready) {
-        all_ready = true;
-        for (size_t i = 0; i < HOMING_GROUP_COUNT; i++) {
-            if (!homingThreads[i]->is_homed) {
-                all_ready = false;
-                break;
-            }
-        }
-        chThdSleepMilliseconds(10);
-    }
+    stability_homed = runHomingCycle();
 
     // Start SPI Driver
     spiStart(&SPID2, &spi2_slave_cfg);
     forceSpiSlave();
 
     LED::red_off();
-    LED::green_on();
+    if (stability_homed) {
+        LED::green_on();
+    } else {
+        LED::red_on();
+    }
 
     // Start Threads. Be cautious if running multiple threads commanding the same motors!
     // remoteControlThread.start(NORMALPRIO + 4);
+    homingManagerThread.start(NORMALPRIO + 4);
     spiControlThread.start(NORMALPRIO + 5);
     // remoteWatchdogThread.start(NORMALPRIO - 1);
 
